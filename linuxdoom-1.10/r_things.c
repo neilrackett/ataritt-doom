@@ -44,7 +44,10 @@ rcsid[] = "$Id: r_things.c,v 1.5 1997/02/03 16:47:56 b1 Exp $";
 
 
 #define MINZ				(FRACUNIT*4)
-#define BASEYCENTER			100
+// 100 on a 200-line screen. On a taller one the weapon sprites (authored
+// against a 200-line screen bottom) would float above the bottom of the
+// view, so the centre moves up by the extra half-height.
+#define BASEYCENTER			(100 - (SCREENHEIGHT-200)/2)
 
 //void R_DrawColumn (void);
 //void R_DrawFuzzColumn (void);

@@ -50,6 +50,11 @@ void I_SubmitSound(void);
 // ... shut down and relase at program termination.
 void I_ShutdownSound(void);
 
+// Hand the VBL back to TOS around an XBIOS call that waits for one (the sound
+// VBL handler does not chain to the system's). No-ops without sound.
+void I_SoundSuspendVbl(void);
+void I_SoundResumeVbl(void);
+
 
 //
 //  SFX I/O

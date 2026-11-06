@@ -60,6 +60,12 @@ rcsid[] = "$Id: m_misc.c,v 1.6 1997/02/03 22:45:10 b1 Exp $";
 #include "m_misc.h"
 
 #include "sidecart_c2p.h"		/* render_mode + STDOOM_DEFAULT_RENDER_MODE */
+#ifdef TTDOOM
+/* No accelerator in TTDOOM, but keep its settings so a doomrc.cfg shared with
+ * STDOOM.TOS round-trips them (sidecart_c2p.c defines these in STDOOM). */
+int render_mode = STDOOM_DEFAULT_RENDER_MODE;
+int palette_gen = STDOOM_DEFAULT_PALETTE_GEN;
+#endif
 
 //
 // M_DrawText

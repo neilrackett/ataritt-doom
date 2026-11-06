@@ -752,6 +752,7 @@ void M_QuickLoad(void)
 void M_DrawReadThis1(void)
 {
     inhelpscreens = true;
+    V_ClearPageBorders (0);
     switch ( gamemode )
     {
       case commercial:
@@ -776,6 +777,7 @@ void M_DrawReadThis1(void)
 void M_DrawReadThis2(void)
 {
     inhelpscreens = true;
+    V_ClearPageBorders (0);
     switch ( gamemode )
     {
       case retail:
@@ -1737,7 +1739,23 @@ void M_StartControlPanel (void)
 // Called after the view has been rendered,
 // but before it has been blitted.
 //
+static void M_DrawMenuLayer (void);
+
+//
+// M_Drawer
+// Menus, help pages and messages are laid out for a 320x200 screen: draw
+// them centred vertically on a taller one.
+//
 void M_Drawer (void)
+{
+    int oldyoffset = v_yoffset;
+
+    v_yoffset = PAGE_YOFFSET;
+    M_DrawMenuLayer ();
+    v_yoffset = oldyoffset;
+}
+
+static void M_DrawMenuLayer (void)
 {
     static short	x;
     static short	y;

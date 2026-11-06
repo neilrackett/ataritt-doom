@@ -85,7 +85,7 @@ rcsid[] = "$Id: wi_stuff.c,v 1.7 1997/02/03 22:45:13 b1 Exp $";
 #define SP_STATSY		50
 
 #define SP_TIMEX		16
-#define SP_TIMEY		(SCREENHEIGHT-32)
+#define SP_TIMEY		(ORIGHEIGHT-32)
 
 
 // NET GAME STUFF
@@ -476,7 +476,7 @@ WI_drawOnLnode
 	if (left >= 0
 	    && right < SCREENWIDTH
 	    && top >= 0
-	    && bottom < SCREENHEIGHT)
+	    && bottom < ORIGHEIGHT)
 	{
 	    fits = true;
 	}
@@ -1555,7 +1555,9 @@ void WI_loadData(void)
 
     // background
     bg = W_CacheLumpName(name, PU_CACHE);    
-    V_DrawPatch(0, 0, 1, bg);
+    // 320x200 background, centred (black bands) on a taller screen
+    V_ClearPageBorders(1);
+    V_DrawPatch(0, PAGE_YOFFSET, 1, bg);
 
 
     // UNUSED unsigned char *pic = screens[1];
@@ -1771,6 +1773,11 @@ void WI_unloadData(void)
 
 void WI_Drawer (void)
 {
+    // Laid out for a 320x200 screen: centred on a taller one, over the
+    // background WI_loadData drew centred into screens[1].
+    int oldyoffset = v_yoffset;
+
+    v_yoffset = PAGE_YOFFSET;
     switch (state)
     {
       case StatCount:
@@ -1790,6 +1797,7 @@ void WI_Drawer (void)
 	WI_drawNoState();
 	break;
     }
+    v_yoffset = oldyoffset;
 }
 
 

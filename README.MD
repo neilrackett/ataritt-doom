@@ -21,6 +21,16 @@ Optional performance boosters:
 
 Without these, it's just regular STDOOM and will most likely be unplayably slow on an 8MHz ST.
 
+### Atari TT and Falcon
+
+`TTDOOM.TOS` is a separate build for the TT and Falcon: 320x240 in 256 colours, compiled for the 68030. It needs a colour monitor (or a TV, on a Falcon) and sets the display mode itself, whatever the desktop's resolution:
+
+- **TT:** TT Low (320x480), each line shown twice.
+- **Falcon on VGA:** 320x240.
+- **Falcon on RGB or TV:** 384x240 overscan, with the picture centred.
+
+The 3D view and status bar use the full 240 lines. Title pages, menus, the intermission and the finale are 320x200 artwork, so they're centred with black bars above and below. The DOOM Accelerator is not used on these machines.
+
 ## How to play
 
 - Install the [DOOM Accelerator](sidecart/README.md) microfirmware on your SidecarTridge Multi-device.
@@ -35,6 +45,7 @@ TOS file and microfirmware are available from the [releases page](https://github
 
 - Runs DOOM (and DOOM II) on Atari ST computers.
 - Supports low resolution (320x200, 16 colors).
+- `TTDOOM.TOS`: 320x240 in 256 colours on the Atari TT and Falcon.
 - Zoomed mode for higher performance (activate by reducing window size using = key or menu).
 - Audio sample playback using STe DMA sound.
 - Music playback using the YM-2149 soundchip (work in progress).
@@ -76,7 +87,7 @@ Each dither mode combines with any palette.
 
 You need a C compiler and GNU Make. I recommend compiling with [`atarist-toolkit-docker`](https://github.com/sidecartridge/atarist-toolkit-docker).
 
-To compile STDOOM, run `make stdoom`.
+To compile STDOOM, run `make stdoom`. This builds both `STDOOM.TOS` (ST/STE) and `TTDOOM.TOS` (TT/Falcon) into `linuxdoom-1.10/build/dist/`. To build just one, run `make -C linuxdoom-1.10 stdoom` or `make -C linuxdoom-1.10 ttdoom` (inside the toolchain, for example via `stcmd`).
 
 To compile the STDOOM Accellerator firmware, run `make sidecart`; see the [`sidecart/README.md`](sidecart/README.md) file for details.
 

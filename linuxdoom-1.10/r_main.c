@@ -687,12 +687,13 @@ void R_ExecuteSetViewSize (void)
     else if (setblocks == 2)
     {
 	scaledviewwidth = setblocks*32 + 16;
-	viewheight = 168/4;
+	viewheight = (SCREENHEIGHT-32)/4;
     }
     else 
     {
+	// SCREENHEIGHT-32: the play area above the status bar (168 at 200)
 	scaledviewwidth = setblocks*32;
-	viewheight = (setblocks*168/10)&~3;
+	viewheight = (setblocks*(SCREENHEIGHT-32)/10)&~3;
     }
     
     detailshift = setdetail;

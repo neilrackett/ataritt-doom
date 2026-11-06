@@ -619,7 +619,7 @@ F_DrawPatchCol
     int		count;
 	
     column = (column_t *)((byte *)patch + LONG(patch->columnofs[col]));
-    desttop = screens[0]+x;
+    desttop = screens[0]+v_yoffset*SCREENWIDTH+x;
 
     // step through the posts in a column
     while (column->topdelta != 0xff )
@@ -675,7 +675,7 @@ void F_BunnyScroll (void)
     if (finalecount < 1180)
     {
 	V_DrawPatch ((SCREENWIDTH-13*8)/2,
-		     (SCREENHEIGHT-8*8)/2,0, W_CacheLumpName ("END0",PU_CACHE));
+		     (ORIGHEIGHT-8*8)/2,0, W_CacheLumpName ("END0",PU_CACHE));
 	laststage = 0;
 	return;
     }
@@ -690,14 +690,33 @@ void F_BunnyScroll (void)
     }
 	
     sprintf (name,"END%i",stage);
-    V_DrawPatch ((SCREENWIDTH-13*8)/2, (SCREENHEIGHT-8*8)/2,0, W_CacheLumpName (name,PU_CACHE));
+    V_DrawPatch ((SCREENWIDTH-13*8)/2, (ORIGHEIGHT-8*8)/2,0, W_CacheLumpName (name,PU_CACHE));
 }
 
 
 //
 // F_Drawer
 //
+static void F_DrawStage (void);
+
+//
+// F_Drawer
+// The finale screens are laid out for a 320x200 screen: draw them centred
+// vertically on a taller one. The text screen tiles its flat over the
+// whole screen; the picture screens get black bands.
+//
 void F_Drawer (void)
+{
+    int oldyoffset = v_yoffset;
+
+    v_yoffset = PAGE_YOFFSET;
+    if (finalestage)
+	V_ClearPageBorders (0);
+    F_DrawStage ();
+    v_yoffset = oldyoffset;
+}
+
+static void F_DrawStage (void)
 {
     if (finalestage == 2)
     {

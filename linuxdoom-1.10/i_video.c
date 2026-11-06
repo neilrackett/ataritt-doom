@@ -24,11 +24,16 @@
 static const char
 rcsid[] = "$Id: i_x.c,v 1.6 1997/02/03 22:45:10 b1 Exp $";
 
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <mint/osbind.h>
 #include "atari_c2p.h"
 #include "sidecart_c2p.h"
+#ifdef TTDOOM
+#include "atari_vmode.h"
+#endif
 
 #include "doomstat.h"
 #include "i_system.h"
@@ -41,15 +46,23 @@ rcsid[] = "$Id: i_x.c,v 1.6 1997/02/03 22:45:10 b1 Exp $";
 
 byte		*st_screen;
 static void *old_interrupt_handler=NULL;
+#ifndef TTDOOM
 static unsigned short old_palette[256];
+#endif
 
 
 void I_ShutdownGraphics(void)
 {
     if (old_interrupt_handler) {
         *(void **)0x118 = old_interrupt_handler;
+#ifndef TTDOOM
         install_palette(old_palette);
+#endif
     }
+#ifdef TTDOOM
+    /* The desktop's mode and colours (no-op if the mode was never set) */
+    atari_vmode_restore();
+#endif
 }
 
 
@@ -342,6 +355,24 @@ extern const unsigned char subset[16];
 
 void I_InitGraphics(void)
 {
+#ifdef TTDOOM
+    atari_vmode_t vmode;
+
+    printf("Replacing keyboard interrupt.\n");
+    old_interrupt_handler = *(void**)0x118;
+    *(void**)0x118 = keyboard_interrupt;
+    printf("Setting 320x240 256-colour mode...\n");
+    fflush(stdout);
+    /* TT Low or Falcon 8-bit on a fresh screen. Nothing may print after
+     * this: the console writes into the picture. */
+    atari_vmode_set(&vmode);
+    /* Cursor off: the mode change re-enables it, and TOS's VBL blink would
+     * draw over the picture. */
+    (void)Cconws("\33f");
+    st_screen = vmode.screen;
+    init_c2p_8bpp(vmode.stride, vmode.dbl, vmode.falcon);
+    draw_palette_table(st_screen);
+#else
     st_screen = Physbase();
     printf("Replacing keyboard interrupt.\n");
     old_interrupt_handler = *(void**)0x118;
@@ -369,6 +400,12 @@ void I_InitGraphics(void)
     printf ("Done.\n");
     // Set cursor to home and stop blinking.
     printf("\33H\33f\n");
+    fflush(stdout);
+    /* TT Low: the 200-line picture leaves the bottom 80 scanlines unused, so
+     * nothing redraws them - clear the console text just printed there. */
+    if (Getrez() == 7)
+        memset(st_screen + 640 * SCREENHEIGHT, 0, 320L * 480 - 640 * SCREENHEIGHT);
+#endif
 }
 
 

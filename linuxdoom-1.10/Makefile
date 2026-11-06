@@ -24,12 +24,16 @@ endif
 CFLAGS=-O3 -Wall -DNORMALUNIX -DLINUX -D__BIG_ENDIAN__ -DUSEASM $(FASTCALLFLAG) -std=c99 -fasm -Iatarist-sfp004
 CFLAGS20=$(CFLAGS) -m68020-60 -mtune=68020 -msoft-float
 CFLAGS2F=$(CFLAGS) -m68020-60 -mtune=68020 -m68881
+# TTDOOM: TT / Falcon, 320x240 in 256 colours, 68030 code. Soft-float so it
+# runs on a Falcon without an FPU (Doom's renderer is fixed-point anyway).
+CFLAGSTT=$(CFLAGS) -m68020-60 -mtune=68030 -msoft-float -DTTDOOM -DSCREENHEIGHT=240
 
 vpath %.c atarist-sfp004
 LDFLAGS= -Wl,-Map=$@.map
 LDLIBS=./deps/68000.soft-float$(LIBVARIANT)/libm.a
 LDLIBS20=./deps/68020-60.soft-float$(LIBVARIANT)/libm.a
 LDLIBS2F=./deps/68020-60.68881$(LIBVARIANT)/libm.a
+LDLIBSTT=$(LDLIBS20)
 
 # subdirectory for objects
 O=build
@@ -40,6 +44,7 @@ EXT=.TOS
 TARGET=STDOOM$(EXT)
 TARGET20=STDOOM20$(EXT)
 TARGET2F=STDOOM2F$(EXT)
+TARGETTT=TTDOOM$(EXT)
 
 # not too sophisticated dependency
 OBJS=				\
@@ -114,13 +119,21 @@ OBJS=				\
 		$(OBJDIR)/i_main.o
 OBJS20=$(OBJS:%.o=%.20.o)
 OBJS2F=$(OBJS:%.o=%.2f.o)
+# TTDOOM: no SidecarTridge accelerator (ST Low only), plus the TT / Falcon
+# video mode code.
+SIDECART_OBJS=$(OBJDIR)/sidecart_c2p.o $(OBJDIR)/sidecart_md.o $(OBJDIR)/sidecart_stubs.o
+OBJSTT=$(patsubst %.o,%.tt.o,$(filter-out $(SIDECART_OBJS),$(OBJS))) $(OBJDIR)/atari_vmode.tt.o
 
-all:	 $(BUILDDIR)/$(TARGET) # $(BUILDDIR)/$(TARGET20) $(BUILDDIR)/$(TARGET2F)
+all:	 $(BUILDDIR)/$(TARGET) $(BUILDDIR)/$(TARGETTT) # $(BUILDDIR)/$(TARGET20) $(BUILDDIR)/$(TARGET2F)
+
+.PHONY: all clean stdoom ttdoom
+stdoom: $(BUILDDIR)/$(TARGET)
+ttdoom: $(BUILDDIR)/$(TARGETTT)
 
 clean:
 	rm -rf $(OBJDIR)
-	rm -f $(BUILDDIR)/$(TARGET) $(BUILDDIR)/$(TARGET20) $(BUILDDIR)/$(TARGET2F) \
-		$(BUILDDIR)/$(TARGET).map $(BUILDDIR)/$(TARGET20).map $(BUILDDIR)/$(TARGET2F).map
+	rm -f $(BUILDDIR)/$(TARGET) $(BUILDDIR)/$(TARGET20) $(BUILDDIR)/$(TARGET2F) $(BUILDDIR)/$(TARGETTT) \
+		$(BUILDDIR)/$(TARGET).map $(BUILDDIR)/$(TARGET20).map $(BUILDDIR)/$(TARGET2F).map $(BUILDDIR)/$(TARGETTT).map
 
 $(BUILDDIR)/$(TARGET):	$(OBJS) | $(BUILDDIR)
 	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDLIBS)
@@ -130,6 +143,12 @@ $(BUILDDIR)/$(TARGET20):	$(OBJS20) | $(BUILDDIR)
 
 $(BUILDDIR)/$(TARGET2F):	$(OBJS2F) | $(BUILDDIR)
 	$(CC) $(CFLAGS2F) $(OBJS2F) -o $@ $(LDLIBS2F)
+
+$(BUILDDIR)/$(TARGETTT):	$(OBJSTT) | $(BUILDDIR)
+	$(CC) $(CFLAGSTT) $(OBJSTT) -o $@ $(LDLIBSTT)
+
+$(OBJDIR)/%.tt.o:	%.c | $(OBJDIR)
+	$(CC) $(CPPFLAGS) $(CFLAGSTT) -c $< -o $@
 
 $(OBJDIR)/%.2f.o:	%.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS2F) -c $< -o $@

@@ -38,6 +38,19 @@
 
 #define CENTERY			(SCREENHEIGHT/2)
 
+// 2D artwork (title pages, menus, intermission, finale) is authored for a
+// 320x200 screen. On a taller screen it is drawn centred vertically: the
+// drawers for those screens set v_yoffset to PAGE_YOFFSET, which V_DrawPatch
+// adds to every y, and full-screen pages clear the bands above and below with
+// V_ClearPageBorders. Both are no-ops at SCREENHEIGHT 200.
+#define ORIGHEIGHT		200
+#define PAGE_YOFFSET		((SCREENHEIGHT-ORIGHEIGHT)/2)
+
+extern int	v_yoffset;
+
+// Fill the bands above and below a centred 320x200 page with black.
+void V_ClearPageBorders (int scrn);
+
 
 // Screen 0 is the screen updated by I_Update screen.
 // Screen 1 is an extra buffer.

@@ -9,7 +9,9 @@ handles the CPU-intensive chunky-to-planar (C2P) conversion, freeing the ST's
 
 Build targets:
 
-- **`linuxdoom-1.10/`** — the ST-side `.TOS` binary (`make stdoom`, via `stcmd`)
+- **`linuxdoom-1.10/`** — the ST-side `.TOS` binary (`make stdoom`, via `stcmd`).
+  The same tree also builds **`TTDOOM.TOS`** (TT/Falcon, 320x240x256, 68030,
+  `-DTTDOOM -DSCREENHEIGHT=240`, no sidecart objects; see "TTDOOM" below)
 - **`sidecart/rp/`** — the RP2040 firmware (`.uf2`, built with `bash sidecart/rp/build.sh pico_w debug`)
 - **`sidecart/tests/`** — standalone SidecarTridge test apps:
   - `make -C sidecart tests` to build all test apps at once
@@ -180,7 +182,7 @@ make -C sidecart c2ptest    # builds sidecart/tests/C2PTEST.TOS
 make -C sidecart recttest   # builds sidecart/tests/RECTTEST.TOS
 
 # ST side
-make stdoom           # builds linuxdoom-1.10/build/dist/STDOOM.TOS
+make stdoom           # builds linuxdoom-1.10/build/dist/STDOOM.TOS + TTDOOM.TOS
 
 # RP2040 microfirmware for SidecarTridge Multi-device
 make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION].uf2
@@ -196,3 +198,40 @@ make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION
 | `$F008` | `$FAF008`  | 2 B     | Status (`$00`=idle, `$01`=busy, `$02`=done)     |
 | `$F00A` | `$FAF00A`  | 2 B     | Ready word (both bytes = `$53` when worker up)  |
 | `$F100` | `$FAF100`  | 2048 B  | Result buffer (PING writes version string here) |
+
+## TTDOOM (TT / Falcon) — notes
+
+- **Build:** the `ttdoom` target in `linuxdoom-1.10/Makefile` (`.tt.o` objects,
+  `-m68020-60 -mtune=68030 -msoft-float -DTTDOOM -DSCREENHEIGHT=240`). The
+  sidecart objects are left out; `sidecart_c2p.h` stubs the API under `TTDOOM`
+  and `m_misc.c` keeps `render_mode`/`palette_gen` so a shared `doomrc.cfg`
+  round-trips.
+- **Mode:** `atari_vmode.c` (after atarist-stdl's `responsive.c`): TT Low via
+  `Setscreen(..,7)` (C2P writes each line to two scanlines); Falcon
+  `VsetScreen(..,3,BPS8|COL40|VGA|VERTFLAG)` on VGA, or `BPS8|COL40|PAL|OVERSCAN`
+  (384 wide, picture 32 in) on RGB/TV. Restores the desktop mode + palette.
+- **240 lines:** `SCREENHEIGHT` is compile-time. 320x200 art (pages, menus, WI,
+  finale) is centred via `v_yoffset`/`PAGE_YOFFSET` + `V_ClearPageBorders`
+  (`v_video.h`); status-bar Y positions use `ST_YOFS()`; `BASEYCENTER` and
+  `skytexturemid` follow `SCREENHEIGHT`. At 200 these all reduce to the
+  original constants (ST code verified identical by disassembly).
+
+### Hard-won fixes (do not regress)
+
+- **STDOOM's sound VBL replaces `$70` without chaining**, so `_frclock` stops.
+  `Setscreen`/`VsetScreen` with a resolution change waits for a VBL and hangs.
+  Wrap such XBIOS calls in `I_SoundSuspendVbl()`/`I_SoundResumeVbl()`.
+- **TT GPIP bit 7 (mono detect) is XORed with the DMA-sound play line**, so it
+  reads inverted once sound is playing. Read it at startup
+  (`atari_vmode_supported()` in `main`, before `I_InitSound`).
+- **Accelerator gate:** `sidecart_c2p_init()` skips detection when `_MCH` is
+  TT or later or `Getrez() != 0`, so a cart in a TT/Falcon is never touched.
+
+### Testing in Hatari
+
+TOS images live in `tmp/tos/` (gitignored; `tos306uk.img` for TT; use EmuTOS
+512k for Falcon). Run headless with `SDL_VIDEODRIVER=dummy`, pass
+`--addr24 off` (after `--machine`) whenever TT-RAM is enabled and
+`--alert-level fatal`, so no dialogs pop up. `--tos-res ttlow` boots a TT in
+TT Low for testing `STDOOM.TOS`'s 8-plane path.
+

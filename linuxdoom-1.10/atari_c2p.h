@@ -3,6 +3,11 @@
 
 void init_c2p_table();
 
+// 8-plane 256-colour screen (TT Low, Falcon 8-bit): stride = bytes from one
+// picture line to the next; dbl = also write each line to the scanline below
+// (TT Low); falcon = Falcon palette registers instead of the TT's.
+void init_c2p_8bpp(unsigned short stride, int dbl, int falcon);
+
 void c2p_screen(unsigned char *out, const unsigned char *in);
 void c2p_statusbar(unsigned char *out, const unsigned char *in, short y_begin, short y_end, short x_begin, short x_end);
 extern void (*set_doom_palette)(const unsigned char *colors);

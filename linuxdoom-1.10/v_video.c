@@ -45,6 +45,10 @@ byte*				screens[5];
  
 int				dirtybox[4]; 
 
+// Added to y by V_DrawPatch/V_DrawPatchFlipped/V_DrawPatchDirect while a
+// 320x200 page is drawn centred on a taller screen (see v_video.h).
+int				v_yoffset;
+
 
 
 // Now where did these came from?
@@ -157,6 +161,29 @@ V_ClearRect()
 }
 
 //
+// V_ClearPageBorders
+// Black bands above and below a 320x200 page drawn centred on a taller
+// screen. Nothing to do at SCREENHEIGHT 200.
+//
+void V_ClearPageBorders (int scrn)
+{
+#if SCREENHEIGHT > ORIGHEIGHT
+    int bottom = PAGE_YOFFSET + ORIGHEIGHT;
+
+    memset (screens[scrn], 0, SCREENWIDTH*PAGE_YOFFSET);
+    memset (screens[scrn] + bottom*SCREENWIDTH, 0,
+	    SCREENWIDTH*(SCREENHEIGHT-bottom));
+    if (!scrn)
+    {
+	V_MarkRect (0, 0, SCREENWIDTH, PAGE_YOFFSET);
+	V_MarkRect (0, bottom, SCREENWIDTH, SCREENHEIGHT-bottom);
+    }
+#else
+    (void)scrn;
+#endif
+}
+
+//
 // V_CopyRect 
 // 
 void
@@ -221,6 +248,7 @@ V_DrawPatch
     byte*	source; 
     int		w; 
 	 
+    y += v_yoffset;
     y -= SHORT(patch->topoffset); 
     x -= SHORT(patch->leftoffset); 
 #ifdef RANGECHECK 
@@ -288,6 +316,7 @@ V_DrawPatchFlipped
     byte*	source; 
     int		w; 
 	 
+    y += v_yoffset;
     y -= SHORT(patch->topoffset); 
     x -= SHORT(patch->leftoffset); 
 #ifdef RANGECHECK 

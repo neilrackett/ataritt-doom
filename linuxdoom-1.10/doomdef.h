@@ -109,7 +109,13 @@ typedef enum
 // So there.
 #define SCREENWIDTH  320
 //SCREEN_MUL*BASE_WIDTH //320
+// The ST build is 320x200. TTDOOM (TT / Falcon) is built with
+// -DSCREENHEIGHT=240: the 3D view and status bar use the full height, and
+// 320x200 artwork (title pages, menus, intermission, finale) is centred
+// vertically (see PAGE_YOFFSET in v_video.h).
+#ifndef SCREENHEIGHT
 #define SCREENHEIGHT 200
+#endif
 //(int)(SCREEN_MUL*BASE_WIDTH*INV_ASPECT_RATIO) //200
 
 

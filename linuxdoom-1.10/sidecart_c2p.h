@@ -40,6 +40,17 @@ extern int render_mode;
  * the m_misc.c defaults[] table. Toggled live with the '0' key for A/B. */
 extern int palette_gen;
 
+#ifdef TTDOOM
+/* TTDOOM (TT / Falcon) has no accelerator path: the SidecarTridge DOOM
+ * Accelerator is an ST Low (16-colour) design and its code is not linked.
+ * render_mode / palette_gen stay (defined in m_misc.c) so a doomrc.cfg shared
+ * with STDOOM.TOS keeps its accelerator settings. */
+#define c2p_md_active 0
+static inline void sidecart_c2p_init(void) {}
+static inline void sidecart_c2p_install(void) {}
+static inline void sidecart_c2p_cycle_render_mode(int delta) { (void)delta; }
+static inline void sidecart_c2p_toggle_palette_gen(void) {}
+#else
 void sidecart_c2p_init(void);
 void sidecart_c2p_install(void);
 
@@ -52,5 +63,6 @@ void sidecart_c2p_cycle_render_mode(int delta);
  * accelerator, refresh the 16 ST colours, and announce via the HUD. No-op when
  * the accelerator is inactive. Bound to the '0' key in i_video.c. */
 void sidecart_c2p_toggle_palette_gen(void);
+#endif /* TTDOOM */
 
 #endif /* SIDECART_C2P_H */

@@ -15,6 +15,7 @@
  */
 
 #include <mint/osbind.h>
+#include <mint/cookie.h>
 #include <stdio.h>
 
 #include "doomdef.h"
@@ -23,6 +24,10 @@
 #include "atari_c2p.h"
 #include "sidecart_c2p.h"
 #include "sidecart_md.h"
+
+#ifndef C__MCH
+#define C__MCH 0x5f4d4348L /* '_MCH' */
+#endif
 
 /* inhelpscreens is declared locally in d_main.c, not in a shared header. */
 extern boolean inhelpscreens;
@@ -466,6 +471,28 @@ void sidecart_c2p_init(void)
         c2p_md_active = 0;
         printf("MD disabled (-nosidecart); SW C2P\n");
         return;
+    }
+
+    /* The accelerator is an ST Low (320x200, 16-colour) path. A TT or a
+     * Falcon has a cartridge port that may hold the cart, but its own
+     * 256-colour display (and a 68030): never talk to the cart there, or in
+     * any other resolution. Otherwise c2p_md_active stayed set with the
+     * software drawfuncs in place, and keypad '*' / '/' sent commands and
+     * loaded 16 ST colours through the TT's 256-entry palette installer. */
+    {
+        long mch = 0;
+        if (Getcookie(C__MCH, &mch) == C_FOUND && (mch >> 16) >= 2)
+        {
+            c2p_md_active = 0;
+            printf("MD ignored on TT/Falcon; SW C2P\n");
+            return;
+        }
+        if (Getrez() != 0)
+        {
+            c2p_md_active = 0;
+            printf("MD needs ST low res; SW C2P\n");
+            return;
+        }
     }
 
     c2p_md_active = sidecart_md_detect();

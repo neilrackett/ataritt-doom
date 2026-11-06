@@ -57,6 +57,8 @@ int			skytexturemid;
 void R_InitSkyMap (void)
 {
   // skyflatnum = R_FlatNumForName ( SKYFLATNAME );
-    skytexturemid = 100*FRACUNIT;
+    // 100 on a 200-line screen: sky texture row 0 at the top of a full
+    // screen view. Taller screens keep row 0 at the top (no wrapped seam).
+    skytexturemid = (SCREENHEIGHT/2)*FRACUNIT;
 }
 

@@ -1024,6 +1024,8 @@ __attribute__((interrupt)) void vbl_interrupt() {
   //*reg = old;
 }
 
+static boolean vbl_installed = false;
+
 // Get the interrupt. Set duration in millisecs.
 int I_SoundSetTimer( int duration_of_tick )
 {
@@ -1032,6 +1034,7 @@ int I_SoundSetTimer( int duration_of_tick )
     pOldVblVec = *pVblVec;
   }
   *pVblVec = vbl_interrupt;
+  vbl_installed = true;
   
   return 0;
 }
@@ -1041,4 +1044,21 @@ int I_SoundSetTimer( int duration_of_tick )
 void I_SoundDelTimer()
 {
   *pVblVec = pOldVblVec;
+  vbl_installed = false;
+}
+
+// The sound VBL handler replaces the system's rather than chaining to it,
+// so while it is installed _frclock / _vbclock stand still. An XBIOS call
+// that waits for the next VBL - Setscreen / VsetScreen changing resolution,
+// Vsync - then never returns. Hand the VBL back to TOS around such a call.
+void I_SoundSuspendVbl(void)
+{
+  if (vbl_installed)
+    *pVblVec = pOldVblVec;
+}
+
+void I_SoundResumeVbl(void)
+{
+  if (vbl_installed)
+    *pVblVec = vbl_interrupt;
 }
