@@ -280,11 +280,11 @@ make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION
 ## Release
 
 `.github/workflows/release.yml`: every push to `main` (except prose,
-`docs/` and `sidecart/` only) builds `dist/TTDOOM.TOS` with `stcmd make
-ttdoom`, moves the lightweight `latest` tag onto the commit through the
-API, and replaces `TTDOOM.TOS` on the hand-written `latest` release with
-`gh release upload --clobber`: no title or notes change, and no other
-asset is added or touched. It checks out only the `src/atarist-sfp004` and
+`docs/` and `sidecart/` only) builds `dist/TTDOOM.TOS` and
+`dist/STDOOM.TOS` with `stcmd make ttdoom stdoom`, moves the lightweight
+`latest` tag onto the commit through the API, and replaces those two on the
+hand-written `latest` release with `gh release upload --clobber`: no title
+or notes change, and no other asset is added or touched. It checks out only the `src/atarist-sfp004` and
 `lib/xpad` submodules, not the Pico SDK. No version tags yet.
 
 ## Xpad (gamepads)
