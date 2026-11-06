@@ -44,10 +44,8 @@ rcsid[] = "$Id: r_things.c,v 1.5 1997/02/03 16:47:56 b1 Exp $";
 
 
 #define MINZ				(FRACUNIT*4)
-// 100 on a 200-line screen. On a taller one the weapon sprites (authored
-// against a 200-line screen bottom) would float above the bottom of the
-// view, so the centre moves up by the extra half-height.
-// In 200-line units: YASPECT scales the weapon's height with the view's
+// id's 100, in 200-line units: on a taller screen YASPECT scales the
+// weapon with the view, so it still meets the bottom of a full view.
 #define BASEYCENTER			100
 
 //void R_DrawColumn (void);

@@ -44,11 +44,8 @@ extern boolean	messageNeedsInput;
 // fold the stick into them), so in play they don't turn as well.
 #define STICK_FOLDED	32
 
-// IKBD joystick packet bits
-#define JOY_UP		0x01
-#define JOY_DOWN	0x02
-#define JOY_LEFT	0x04
-#define JOY_RIGHT	0x08
+// IKBD joystick packet: up, down, left and right are bits 0-3, the same
+// as XPAD_UP..XPAD_RIGHT, and fire is bit 7
 #define JOY_FIRE	0x80
 
 static const XPAD	*xpad;
@@ -119,14 +116,7 @@ static uint32_t buttons_now (boolean menu)
 	&& stick_off_centre (pad.lx, pad.ly))
 	b &= ~XPAD_DPAD;
 
-    if (joy1 & JOY_UP)
-	b |= XPAD_UP;
-    if (joy1 & JOY_DOWN)
-	b |= XPAD_DOWN;
-    if (joy1 & JOY_LEFT)
-	b |= XPAD_LEFT;
-    if (joy1 & JOY_RIGHT)
-	b |= XPAD_RIGHT;
+    b |= joy1 & XPAD_DPAD;
     if (joy1 & JOY_FIRE)
 	b |= XPAD_SOUTH;
     return b;

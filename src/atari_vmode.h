@@ -16,7 +16,6 @@
 typedef struct {
     unsigned char *screen;  /* first byte of the 320x240 picture */
     unsigned short stride;  /* bytes from one picture line to the next */
-    unsigned char dbl;      /* TT: each line also written to the scanline below */
     unsigned char falcon;   /* palette registers: Falcon $FF9800, else TT $FF8400 */
 } atari_vmode_t;
 

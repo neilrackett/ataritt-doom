@@ -51,8 +51,8 @@ int				dirtybox[4];
 int				playdirtybox[4] = { MININT, MAXINT, MAXINT, MININT };
 #endif
 
-// Added to y by V_DrawPatch/V_DrawPatchFlipped/V_DrawPatchDirect while a
-// 320x200 page is drawn centred on a taller screen (see v_video.h).
+// Set while 320x200 art is drawn: V_DrawPatch and V_DrawPatchFlipped then
+// take y in page coordinates and stretch to a taller screen (v_video.h).
 int				v_page;
 
 #if SCREENHEIGHT > ORIGHEIGHT

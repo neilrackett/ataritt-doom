@@ -37,6 +37,17 @@ rcsid[] = "$Id: r_segs.c,v 1.3 1997/01/29 20:10:19 b1 Exp $";
 #include "doomstat.h"
 
 #include "r_local.h"
+
+// A wall's light index: by its unstretched scale, as at 200 lines
+// (YASPECT_INV of scale>>LIGHTSCALESHIFT), which the callers then clamp to
+// MAXLIGHTSCALE-1. Once a column, so at 240 lines in 16-bit maths: gcc
+// makes x*5/6 a 64-bit muls.l, which a 68060 traps. x*214>>8 is exact
+// below 58, and from 58 the index is MAXLIGHTSCALE-1 anyway.
+#if SCREENHEIGHT == 240
+#define LIGHT_INDEX(x)	((x) >= 58 ? MAXLIGHTSCALE-1 : ((x) * 214) >> 8)
+#else
+#define LIGHT_INDEX(x)	(x)
+#endif
 #include "r_sky.h"
 
 
@@ -166,8 +177,7 @@ R_RenderMaskedSegRange
 	{
 	    if (!fixedcolormap)
 	    {
-		// Light by the unstretched scale, as at 200 lines
-		index = YASPECT_INV(spryscale>>LIGHTSCALESHIFT);
+		index = LIGHT_INDEX(spryscale>>LIGHTSCALESHIFT);
 
 		if (index >=  MAXLIGHTSCALE )
 		    index = MAXLIGHTSCALE-1;
@@ -281,8 +291,7 @@ void R_RenderSegLoop (void)
 	    texturecolumn = rw_offset-FixedMul(finetangent[angle],rw_distance);
 	    texturecolumn >>= FRACBITS;
 	    // calculate lighting
-	    // Light by the unstretched scale, as at 200 lines
-	    index = YASPECT_INV(rw_scale>>LIGHTSCALESHIFT);
+	    index = LIGHT_INDEX(rw_scale>>LIGHTSCALESHIFT);
 
 	    if (index >=  MAXLIGHTSCALE )
 		index = MAXLIGHTSCALE-1;

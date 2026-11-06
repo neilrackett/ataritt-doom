@@ -441,16 +441,20 @@ void R_DrawFuzzColumnLow (void)
 	return; 
 
     dest = ylookup[dc_yl] + columnofs[dc_x << 1];
+    // fuzzpos in a register, as R_DrawFuzzColumn: the byte stores through
+    // dest could alias the global, so gcc would reload it every pixel
+    short pos = fuzzpos;
     do 
     {
-	short ofs = fuzzoffset[fuzzpos];
+	short ofs = fuzzoffset[pos];
 
 	dest[0] = colormap[dest[ofs]];
 	dest[1] = colormap[dest[1 + ofs]];
-	if (++fuzzpos == FUZZTABLE) 
-	    fuzzpos = 0;
+	if (++pos == FUZZTABLE) 
+	    pos = 0;
 	dest += SCREENWIDTH; 
     } while (count--);
+    fuzzpos = pos;
 } 
  
   

@@ -7,6 +7,7 @@
 #include <mint/osbind.h>
 #include <mint/falcon.h>
 #include <mint/cookie.h>
+#include <mint/sysvars.h>
 
 #include "i_system.h"
 #include "i_sound.h"
@@ -27,8 +28,6 @@
  * sound "playing" line, so it reads inverted while DMA sound plays. */
 #define MFP_GPIP        (*(volatile unsigned char *)0xFFFFFA01L)
 #define DMASND_CTRL     (*(volatile unsigned char *)0xFFFF8901L)
-#define FRCLOCK         (*(volatile long *)0x466L)
-#define HZ200           (*(volatile unsigned long *)0x4BAL)
 /* Video base address, high and middle bytes (pages are 256-byte aligned, so
  * the low byte stays 0). The video hardware reads them at the start of each
  * frame. */
@@ -41,7 +40,8 @@
 #define FALCON_OVERSCAN_STRIDE  384
 #define FALCON_OVERSCAN_LEFT    32
 
-static int vmode_machine;           /* 0 = not set, else MACHINE_TT/FALCON */
+static int machine;                 /* MACHINE_TT or _FALCON: atari_vmode_supported */
+static int mode_set;                /* the 320x240 mode is on screen */
 static void *old_logbase;
 static void *old_physbase;
 static short old_rez;               /* TT */
@@ -58,18 +58,8 @@ static int vmode_pages;
 static int vmode_hidden;            /* index of the page not on screen */
 static unsigned short vmode_left;   /* picture offset within a page */
 static int flip_pending;
-static long flip_frame;             /* _frclock when the flip was asked for */
+static unsigned long flip_frame;    /* _frclock when the flip was asked for */
 static unsigned long flip_hz;       /* _hz_200 then */
-static int tt_colour_monitor = 1;   /* read at startup, before sound plays */
-
-static int machine_type(void)
-{
-    long mch = 0;
-
-    if (Getcookie(C__MCH, &mch) != C_FOUND)
-        return 0;
-    return (int)(mch >> 16);
-}
 
 /* Supexec: 1 on a colour monitor. Read before STDOOM starts DMA sound, and
  * corrected for the play line in case something else is playing. */
@@ -91,12 +81,13 @@ static int refuse(const char *why)
 
 int atari_vmode_supported(void)
 {
-    int machine = machine_type();
+    long mch = 0;
 
+    if (Getcookie(C__MCH, &mch) == C_FOUND)
+        machine = (int)(mch >> 16);
     if (machine == MACHINE_TT)
     {
-        tt_colour_monitor = (int)Supexec(read_tt_colour_monitor);
-        if (!tt_colour_monitor)
+        if (!Supexec(read_tt_colour_monitor))
             return refuse("TTDOOM.TOS needs a colour monitor (TT Low,\r\n"
                           "256 colours).\r\n");
         return 1;
@@ -113,16 +104,26 @@ int atari_vmode_supported(void)
 }
 
 /* Falcon: the 8-bit mode for this monitor, keeping the desktop's PAL or
- * NTSC on RGB / TV. Also notes the desktop's mode, for the restore. */
+ * NTSC on RGB / TV. */
 static short falcon_mode(void)
 {
-    old_vmode = VsetMode(-1);
     if (VgetMonitor() == MON_VGA)
         /* 320x480 with the VIDEL doubling lines: 320x240 */
         return BPS8 | COL40 | VGA | VERTFLAG;
     /* 240 lines on RGB / TV take overscan. A set or monitor made for one
      * of PAL and NTSC may not sync to the other. */
-    return BPS8 | COL40 | (old_vmode & PAL) | OVERSCAN;
+    return BPS8 | COL40 | (VsetMode(-1) & PAL) | OVERSCAN;
+}
+
+/* Until the next VBL, which lands any colours the XBIOS still holds for a
+ * mode change. Bounded: the VBL may be masked on an error path. */
+static void wait_vbl(void)
+{
+    unsigned long frame = *_frclock;
+    long n;
+
+    for (n = 0; n < 400000L && *_frclock == frame; n++)
+        ;
 }
 
 /* The ST-RAM for the display pages, aligned to 256 bytes as the video base
@@ -148,40 +149,22 @@ static void alloc_pages(long bytes)
 
 void atari_vmode_reserve(void)
 {
-    int machine = machine_type();
-
-    if (machine == MACHINE_TT)
-        alloc_pages(TT_LOW_BYTES);
-    else if (machine == MACHINE_FALCON)
-        alloc_pages(VgetSize(falcon_mode()));
+    alloc_pages(machine == MACHINE_FALCON ? VgetSize(falcon_mode()) : TT_LOW_BYTES);
 }
 
+/* main() has already refused anything but a TT or Falcon with a colour
+ * monitor (atari_vmode_supported), so this trusts both. */
 void atari_vmode_set(atari_vmode_t *m)
 {
-    int machine = machine_type();
     unsigned char *page;
     long bytes;
     short mode = 0;
-    short monitor;
     int i;
 
     memset(m, 0, sizeof(*m));
 
-    if (machine == MACHINE_TT)
+    if (machine == MACHINE_FALCON)
     {
-        /* Checked at startup (atari_vmode_supported): DMA sound is
-         * playing now, which inverts the monitor-detect bit. */
-        if (!tt_colour_monitor)
-            I_Error("TTDOOM needs a colour monitor (TT Low, 256 colours)");
-        bytes = TT_LOW_BYTES;
-        m->stride = 640;    /* each picture line on two 320-byte scanlines */
-        m->dbl = 1;
-    }
-    else if (machine == MACHINE_FALCON)
-    {
-        monitor = VgetMonitor();
-        if (monitor == MON_MONO)
-            I_Error("TTDOOM needs a colour monitor or TV (256 colours)");
         mode = falcon_mode();
         m->stride = (mode & OVERSCAN) ? FALCON_OVERSCAN_STRIDE : 320;
         bytes = VgetSize(mode);
@@ -189,8 +172,8 @@ void atari_vmode_set(atari_vmode_t *m)
     }
     else
     {
-        I_Error("TTDOOM needs an Atari TT or Falcon");
-        return;
+        bytes = TT_LOW_BYTES;
+        m->stride = 640;    /* each picture line on two 320-byte scanlines */
     }
 
     /* Video memory must be ST-RAM. Usually reserved already, before Doom's
@@ -205,45 +188,38 @@ void atari_vmode_set(atari_vmode_t *m)
     old_logbase = Logbase();
     old_physbase = Physbase();
     old_rez = Getrez();
-    for (i = 0; i < 16; i++)
-        old_st_palette[i] = ST_PALETTE[i];
     /* The mode change waits for a VBL, which STDOOM's sound handler (not
-     * chained to the system's) would never let TOS see. */
+     * chained to the system's) would never let TOS see. Then the palette is
+     * black until Doom sets its own with the first frame: the cleared screen
+     * would otherwise show the desktop's colour 0, white. */
     I_SoundSuspendVbl();
     if (m->falcon)
     {
+        old_vmode = VsetMode(-1);
+        for (i = 0; i < 16; i++)
+            old_st_palette[i] = ST_PALETTE[i];
         for (i = 0; i < 256; i++)
             old_falcon_palette[i] = FALCON_PALETTE[i];
         (void)VsetScreen(page, page, 3, mode);
         vmode_left = (mode & OVERSCAN) ? FALCON_OVERSCAN_LEFT : 0;
+        wait_vbl();
+        for (i = 0; i < 256; i++)
+            FALCON_PALETTE[i] = 0;
     }
     else
     {
+        /* The 16 ST registers are a bank of these 256 on a TT */
         for (i = 0; i < 256; i++)
             old_tt_palette[i] = TT_PALETTE[i];
         (void)Setscreen(page, page, TT_LOW_REZ);
         vmode_left = 0;
-    }
-    /* Black until Doom sets its palette with the first frame: the cleared
-     * screen would otherwise show the desktop's colour 0, white. After the
-     * next VBL, which lands any colours the XBIOS holds for the mode change
-     * (bounded, as in atari_vmode_restore). */
-    {
-        long frame = FRCLOCK, n;
-
-        for (n = 0; n < 400000L && FRCLOCK == frame; n++)
-            ;
+        wait_vbl();
         for (i = 0; i < 256; i++)
-        {
-            if (m->falcon)
-                FALCON_PALETTE[i] = 0;
-            else
-                TT_PALETTE[i] = 0;
-        }
+            TT_PALETTE[i] = 0;
     }
     I_SoundResumeVbl();
     m->screen = page + vmode_left;
-    vmode_machine = machine;
+    mode_set = 1;
 }
 
 unsigned char *atari_vmode_draw_page(void)
@@ -256,7 +232,7 @@ unsigned char *atari_vmode_draw_page(void)
          * flip landed. Bounded by the 200 Hz timer (two 50 Hz frames are 8
          * ticks) in case nothing counts VBLs. In play this rarely waits: the
          * game logic and 3D render run between flip and draw. */
-        while (FRCLOCK - flip_frame < 2 && HZ200 - flip_hz < 10)
+        while (*_frclock - flip_frame < 2 && *_hz_200 - flip_hz < 10)
             ;
         flip_pending = 0;
     }
@@ -272,35 +248,30 @@ void atari_vmode_show_page(void)
     base = (unsigned long)vmode_page[vmode_hidden];
     VIDEO_BASE_HI = (unsigned char)(base >> 16);
     VIDEO_BASE_MID = (unsigned char)(base >> 8);
-    flip_frame = FRCLOCK;
-    flip_hz = HZ200;
+    flip_frame = *_frclock;
+    flip_hz = *_hz_200;
     flip_pending = 1;
     vmode_hidden ^= 1;
 }
 
 void atari_vmode_restore(void)
 {
-    long frame, n;
     int i;
 
-    if (!vmode_machine)
+    if (!mode_set)
         return;
 
     /* As in atari_vmode_set: TOS's VBL must run for the mode change, and
      * for the wait below (I_Error gets here with the sound VBL in place). */
     I_SoundSuspendVbl();
-    if (vmode_machine == MACHINE_FALCON)
+    if (machine == MACHINE_FALCON)
         (void)VsetScreen(old_logbase, old_physbase, 3, old_vmode);
     else
         (void)Setscreen(old_logbase, old_physbase, old_rez);
+    /* The colours after the mode change has landed */
+    wait_vbl();
 
-    /* The colours after the next VBL, which lands any the XBIOS still holds
-     * for the mode change. Bounded: the VBL may be masked on an error path. */
-    frame = FRCLOCK;
-    for (n = 0; n < 400000L && FRCLOCK == frame; n++)
-        ;
-
-    if (vmode_machine == MACHINE_FALCON)
+    if (machine == MACHINE_FALCON)
     {
         for (i = 0; i < 256; i++)
             FALCON_PALETTE[i] = old_falcon_palette[i];
@@ -309,13 +280,12 @@ void atari_vmode_restore(void)
     }
     else
     {
-        /* The 16 ST registers are a bank of these 256 on a TT */
         for (i = 0; i < 256; i++)
             TT_PALETTE[i] = old_tt_palette[i];
     }
     I_SoundResumeVbl();
 
-    vmode_machine = 0;
+    mode_set = 0;
     vmode_pages = 0;
     flip_pending = 0;
     if (screen_alloc)

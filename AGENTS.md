@@ -356,7 +356,9 @@ Anything that reads or publishes Xpad: read
   and stretched (screen row d = page row d*200/240, `v_video.c`), and the 3D
   view's vertical scale is `YASPECT()` (x6/5, `doomdef.h`) of the horizontal -
   walls, plane row distances, sprites, weapon, sky - with lighting on the
-  unstretched scale. `BASEYCENTER`/`skytexturemid` are id's 100 again.
+  unstretched scale (`LIGHT_INDEX` in `r_segs.c` divides the wall scale
+  back down, exact for the scales Doom produces). `BASEYCENTER` and
+  `skytexturemid` are id's 100 again.
   Status-bar Y positions use `ST_YOFS()`. At 200 all of this reduces to the
   original code (ST renderer verified identical by disassembly).
 - **Double buffering:** `atari_vmode.c` allocates two ST-RAM pages;
@@ -387,8 +389,9 @@ Anything that reads or publishes Xpad: read
   doubling (drew twice the span). Fuzz/translated columns have `Low`
   versions. Width checks outside the renderer use `scaledviewwidth`.
 - **Shrunk views (sizes 6-9, TTDOOM):** `c2p_view_8bpp` converts the view
-  rect, what `playdirtybox` says changed, and the HUD message rows for a few
-  frames after a message (its erase isn't marked), not the static border.
+  rect and what `playdirtybox` says changed, not the static border. Anything
+  drawn above the status bar outside the view must reach `V_MarkRect`: the
+  HUD message's erase (`HUlib_eraseTextLine`) marks its rows for this.
 
 ### Hard-won fixes (do not regress)
 

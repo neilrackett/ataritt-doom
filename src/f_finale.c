@@ -620,11 +620,9 @@ F_DrawPatchCol
 	
     column = (column_t *)((byte *)patch + LONG(patch->columnofs[col]));
 #if SCREENHEIGHT > ORIGHEIGHT
-    if (v_page)
-    {
-	V_DrawPageColumn (x, 0, 0, column);
-	return;
-    }
+    // Only F_Drawer draws the bunny scroll, so this is always a page
+    V_DrawPageColumn (x, 0, 0, column);
+    return;
 #endif
     desttop = screens[0]+x;
 
@@ -713,11 +711,9 @@ static void F_DrawStage (void);
 //
 void F_Drawer (void)
 {
-    int oldpage = v_page;
-
     v_page = 1;
     F_DrawStage ();
-    v_page = oldpage;
+    v_page = 0;
 }
 
 static void F_DrawStage (void)

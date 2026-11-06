@@ -51,6 +51,8 @@ rcsid[] = "$Id: i_unix.c,v 1.5 1997/02/03 22:45:10 b1 Exp $";
 #include <signal.h>
 
 #include "z_zone.h"
+#include <string.h>
+#include <mint/sysvars.h>
 
 #include "i_system.h"
 #include "i_sound.h"
@@ -223,6 +225,10 @@ getsfx
     int                 paddedsize;
     char                name[20];
     int                 sfxlump;
+    boolean             is_pistol;
+    // The padded pistol, which every sound missing from the WAD shares
+    static void*        pistol;
+    static int          pistollen;
 
     
     // Get the sound data from the WAD, allocate lump
@@ -238,11 +244,18 @@ getsfx
     //  which sets the external variable.
     // I do not do runtime patches to that
     //  variable. Instead, we will use a
-    //  default sound for replacement.
-    if ( W_CheckNumForName(name) == -1 )
+    //  default sound for replacement: the pistol, one padded copy for
+    //  all of them (with the shareware WAD, 53 copies would hold 300K of
+    //  zone memory for good).
+    sfxlump = W_CheckNumForName(name);
+    is_pistol = sfxlump == -1 || !strcmp(sfxname, "pistol");
+    if (is_pistol && pistol)
+    {
+      *len = pistollen;
+      return pistol;
+    }
+    if (sfxlump == -1)
       sfxlump = W_GetNumForName("dspistol");
-    else
-      sfxlump = W_GetNumForName(name);
     
     size = W_LumpLength( sfxlump );
 
@@ -274,6 +287,11 @@ getsfx
     
     // Preserve padded length.
     *len = paddedsize;
+    if (is_pistol)
+    {
+      pistol = paddedsfx + 8;
+      pistollen = paddedsize;
+    }
 
     // Return allocated padded data.
     return (void *) (paddedsfx + 8);
@@ -880,19 +898,7 @@ I_InitSound()
   for (i=1 ; i<NUMSFX ; i++)
   { 
     // Alias? Example is the chaingun sound linked to pistol.
-    char lumpname[20];
-
-    sprintf(lumpname, "ds%s", S_sfx[i].name);
-    if (!S_sfx[i].link && i != sfx_pistol && W_CheckNumForName(lumpname) == -1)
-    {
-      // Not in this WAD (DOOM II's sounds, with DOOM): getsfx plays the
-      // pistol instead, but would pad another copy of it for each one,
-      // which with the shareware WAD is 53 copies and 300K of zone
-      // memory for good. Share the one copy. (sfx_pistol is loaded first.)
-      S_sfx[i].data = S_sfx[sfx_pistol].data;
-      lengths[i] = lengths[sfx_pistol];
-    }
-    else if (!S_sfx[i].link)
+    if (!S_sfx[i].link)
     {
       // Load data from WAD file.
       S_sfx[i].data = getsfx( S_sfx[i].name, &lengths[i] );
@@ -1019,7 +1025,7 @@ __attribute__((interrupt)) void vbl_interrupt() {
 #ifdef TTDOOM
   /* Count frames as TOS's VBL handler, which this one replaces, would:
    * TTDOOM's page flip (atari_vmode.c) waits on _frclock. */
-  (*(volatile long *)0x466)++;
+  (*_frclock)++;
 #endif
   if (in_vbl) return;
   in_vbl = true;

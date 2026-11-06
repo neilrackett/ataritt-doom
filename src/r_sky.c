@@ -57,9 +57,8 @@ int			skytexturemid;
 void R_InitSkyMap (void)
 {
   // skyflatnum = R_FlatNumForName ( SKYFLATNAME );
-    // 100 on a 200-line screen: sky texture row 0 at the top of a full
-    // screen view. Taller screens keep row 0 at the top (no wrapped seam).
-    // In 200-line units, as the sky's YASPECT'd column scale
+    // id's 100, in 200-line units: with the sky's column scale YASPECT'd,
+    // texture row 0 is at the top of a full view on a taller screen too.
     skytexturemid = 100*FRACUNIT;
 }
 

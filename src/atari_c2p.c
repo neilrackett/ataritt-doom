@@ -9,7 +9,6 @@
 #include "z_zone.h"
 #include "doomdef.h"
 #include "m_bbox.h"
-#include "hu_stuff.h"
 
 /* Some environments don't define u_int32_t, but do define uint32_t. */
 typedef uint32_t u_int32_t;
@@ -7368,30 +7367,6 @@ void set_falcon_doom_palette(const unsigned char *colors)
         *reg++ = ((unsigned long)(colors[0] & 0xfc) << 24) | ((unsigned long)(colors[1] & 0xfc) << 16) | (colors[2] & 0xfc);
 }
 
-// The save/install pointers carry 256 TT-style 0x0RGB words; on a Falcon they
-// are converted to and from its registers (4 of its 6 bits a channel).
-void install_falcon_palette(const unsigned short *palette)
-{
-    unsigned char colors[3 * 256];
-    for (short n = 0; n < 256; n++)
-    {
-        colors[3 * n] = ((palette[n] >> 8) & 15) * 17;
-        colors[3 * n + 1] = ((palette[n] >> 4) & 15) * 17;
-        colors[3 * n + 2] = (palette[n] & 15) * 17;
-    }
-    set_falcon_doom_palette(colors);
-}
-
-void save_falcon_palette(unsigned short *palette)
-{
-    volatile unsigned long *reg = FALCON_PALETTE;
-    for (short n = 0; n < 256; n++)
-    {
-        unsigned long v = *reg++;
-        palette[n] = ttcolor(v >> 24, v >> 16, v);
-    }
-}
-
 // Find the ST palette color index to fill a pixel with according to given weights.
 short bayer4_color(const unsigned char *weights, short numcolors, short phase, short px)
 {
@@ -7463,7 +7438,6 @@ static void c2p8_320x1(unsigned char *out, const unsigned char *in, unsigned sho
 static void c2p8_320x2(unsigned char *out, const unsigned char *in, unsigned short pixels);
 static void c2p8_320x4(unsigned char *out, const unsigned char *in, unsigned short pixels);
 static void c2p8_320x8(unsigned char *out, const unsigned char *in, unsigned short pixels);
-static void c2p8_384x1(unsigned char *out, const unsigned char *in, unsigned short pixels);
 static void c2p8_384x2(unsigned char *out, const unsigned char *in, unsigned short pixels);
 static void c2p8_384x4(unsigned char *out, const unsigned char *in, unsigned short pixels);
 
@@ -7475,27 +7449,15 @@ static void c2p8_384x4(unsigned char *out, const unsigned char *in, unsigned sho
 #define ZOOM4X_Y		(ZOOM_PLAY_HEIGHT * 3 / 8)
 
 // 8-plane (TT Low / Falcon 8-bit) screen geometry, set by init_c2p_8bpp():
-// bytes from one picture line to the next, and whether each line is also
-// written to the scanline below (TT).
+// bytes from one picture line to the next, and the converters writing one
+// chunky line to 1, 2 or 4 picture lines (zoomed views convert each source
+// line once; on the TT each picture line is two scanlines).
 static unsigned short c2p8_stride = 640;
-static unsigned char c2p8_dbl = 1;
 
 typedef void (*c2p8_func)(unsigned char *out, const unsigned char *in, unsigned short pixels);
-static c2p8_func c2p8_funcs[3];     // writing 1, 2 or 4 picture lines
+static c2p8_func c2p8_line, c2p8_line2, c2p8_line4;
 // A zoomed line, widened: long-aligned, as the C2P reads it by the long
 static uint32_t c2p8_wide[SCREENWIDTH / 4];
-
-// Converts one chunky line and writes it to `lines` picture lines (1, 2 or
-// 4) from out: zoomed views convert each source line once.
-static inline void c2p8_lines(unsigned char *out, const unsigned char *in, unsigned short pixels, short lines)
-{
-    c2p8_funcs[lines >> 1](out, in, pixels);
-}
-
-static inline void c2p8_line(unsigned char *out, const unsigned char *in, unsigned short pixels)
-{
-    c2p8_funcs[0](out, in, pixels);
-}
 
 void c2p_statusbar_lorez(unsigned char *out, const unsigned char *in, short y_begin, short y_end, short x_begin, short x_end)
 {
@@ -7533,7 +7495,9 @@ static void c2p_statusbar_hirez(unsigned char *out, const unsigned char *in, sho
     }
 }
 
-static void c2p_statusbar_8bpp(unsigned char *out, const unsigned char *in, short y_begin, short y_end, short x_begin, short x_end)
+// Rows y_begin..y_end-1 from x_begin to x_end (whole 16-pixel groups): the
+// status bar's dirty cells, or the whole screen.
+static void c2p_rect_8bpp(unsigned char *out, const unsigned char *in, short y_begin, short y_end, short x_begin, short x_end)
 {
     // 8 planes: one byte per pixel across a 16-pixel group
     out += y_begin * c2p8_stride + x_begin;
@@ -7691,7 +7655,7 @@ void init_c2p_table()
     else if (res == 7)
     {
         // TT low resolution (320x480, 256 colours): each line on two scanlines
-        init_c2p_8bpp(640, 1, 0);
+        init_c2p_8bpp(640, 0);
         // Clear screen
         memset(Physbase(), 0, 320 * 480);
     }
@@ -7701,16 +7665,14 @@ void init_c2p_table()
     }
 }
 
-void init_c2p_8bpp(unsigned short stride, int dbl, int falcon)
+void init_c2p_8bpp(unsigned short stride, int falcon)
 {
     c2p8_stride = stride;
-    c2p8_dbl = dbl ? 1 : 0;
     c2p_screen_drawfunc = c2p_screen_8bpp;
-    c2p_statusbar_drawfunc = c2p_statusbar_8bpp;
+    c2p_statusbar_drawfunc = c2p_rect_8bpp;
     if (falcon)
     {
-        install_palette = install_falcon_palette;
-        save_palette = save_falcon_palette;
+        // TTDOOM keeps the desktop's palette itself (atari_vmode.c)
         set_doom_palette = set_falcon_doom_palette;
     }
     else
@@ -7719,26 +7681,26 @@ void init_c2p_8bpp(unsigned short stride, int dbl, int falcon)
         save_palette = save_tt_palette;
         set_doom_palette = set_tt_doom_palette;
     }
-    if (c2p8_dbl)
+    if (!falcon)
     {
         // TT Low: two 320-byte scanlines a picture line
-        c2p8_funcs[0] = c2p8_320x2;
-        c2p8_funcs[1] = c2p8_320x4;
-        c2p8_funcs[2] = c2p8_320x8;
+        c2p8_line = c2p8_320x2;
+        c2p8_line2 = c2p8_320x4;
+        c2p8_line4 = c2p8_320x8;
     }
     else if (stride == 384)
     {
-        // Falcon RGB / TV overscan
-        c2p8_funcs[0] = c2p8_384x1;
-        c2p8_funcs[1] = c2p8_384x2;
-        c2p8_funcs[2] = c2p8_384x4;
+        // Falcon RGB / TV overscan (one line has no scanline stride)
+        c2p8_line = c2p8_320x1;
+        c2p8_line2 = c2p8_384x2;
+        c2p8_line4 = c2p8_384x4;
     }
     else
     {
         // Falcon VGA, the VIDEL doubling lines
-        c2p8_funcs[0] = c2p8_320x1;
-        c2p8_funcs[1] = c2p8_320x2;
-        c2p8_funcs[2] = c2p8_320x4;
+        c2p8_line = c2p8_320x1;
+        c2p8_line2 = c2p8_320x2;
+        c2p8_line4 = c2p8_320x4;
     }
 }
 
@@ -8024,7 +7986,6 @@ C2P8_MERGE_FN(c2p8_320x1, 320, 1)
 C2P8_MERGE_FN(c2p8_320x2, 320, 2)
 C2P8_MERGE_FN(c2p8_320x4, 320, 4)
 C2P8_MERGE_FN(c2p8_320x8, 320, 8)
-C2P8_MERGE_FN(c2p8_384x1, 384, 1)
 C2P8_MERGE_FN(c2p8_384x2, 384, 2)
 C2P8_MERGE_FN(c2p8_384x4, 384, 4)
 
@@ -8565,42 +8526,28 @@ static void c2p_screen_hirez(unsigned char *out, const unsigned char *in)
     }
 }
 
-// TTDOOM, double buffered: what changed in screens[0] since the page being
-// drawn last took it (the dirty boxes of this frame and the one before), set
-// by I_FinishUpdate before each frame's C2P.
+#ifdef TTDOOM
+// Double buffered: what changed in screens[0] since the page being drawn
+// last took it (the dirty boxes of this frame and the one before), set by
+// I_FinishUpdate before each frame's C2P.
 static int c2p8_dirty[4];
-static boolean c2p8_have_dirty;
 
 void c2p_8bpp_set_dirty(const int *box)
 {
     memcpy(c2p8_dirty, box, sizeof(c2p8_dirty));
-    c2p8_have_dirty = true;
 }
 
-// Rows of the top of the screen that HUD messages use
-#define C2P8_MSG_ROWS 16
-
 // A shrunk view (sizes 6-9): converts the view and whatever else changed in
-// the play area - the border when Doom redraws it, HUD messages, the pause
-// sign, screen wipes, all of which mark the dirty box - and the message rows
-// for a few frames after a message goes (its erase is not marked). The rest
-// of the border is already on the page.
+// the play area - the border when Doom redraws it, HUD messages and their
+// erasing, the pause sign, screen wipes, all of which mark the dirty box.
+// The rest of the border is already on the page.
 static void c2p_view_8bpp(unsigned char *out, const unsigned char *in, short splitline)
 {
-    static short msg_frames;
     short vx0 = viewwindowx, vx1 = viewwindowx + scaledviewwidth;
     short vy0 = viewwindowy, vy1 = viewwindowy + viewheight;
     int dx0 = c2p8_dirty[BOXLEFT], dx1 = c2p8_dirty[BOXRIGHT] + 1;
     int dy0 = c2p8_dirty[BOXBOTTOM], dy1 = c2p8_dirty[BOXTOP] + 1;
-    short msg_rows = 0;
 
-    if (HU_MessageActive())
-        msg_frames = 4;     // both pages, and HUlib's erase frames
-    if (msg_frames > 0)
-    {
-        msg_frames--;
-        msg_rows = C2P8_MSG_ROWS;
-    }
     // Whole 16-pixel groups, inside the play area
     if (dx0 < 0)
         dx0 = 0;
@@ -8615,80 +8562,69 @@ static void c2p_view_8bpp(unsigned char *out, const unsigned char *in, short spl
     if (dx1 <= dx0)
         dy1 = 0;
 
-    for (short line = 0; line < splitline; line++)
+    for (short line = 0; line < splitline; line++, out += c2p8_stride, in += SCREENWIDTH)
     {
         short x0 = SCREENWIDTH, x1 = 0;
 
-        if (line < msg_rows)
+        if (line >= vy0 && line < vy1)
         {
-            x0 = 0;
-            x1 = SCREENWIDTH;
+            x0 = vx0;
+            x1 = vx1;
         }
-        else
+        if (line >= dy0 && line < dy1)
         {
-            if (line >= vy0 && line < vy1)
-            {
-                x0 = vx0;
-                x1 = vx1;
-            }
-            if (line >= dy0 && line < dy1)
-            {
-                if (dx0 < x0)
-                    x0 = dx0;
-                if (dx1 > x1)
-                    x1 = dx1;
-            }
+            if (dx0 < x0)
+                x0 = dx0;
+            if (dx1 > x1)
+                x1 = dx1;
         }
         if (x0 < x1)
-            c2p8_line(out + c2p8_stride * line + x0, in + SCREENWIDTH * line + x0, x1 - x0);
+            c2p8_line(out + x0, in + x0, x1 - x0);
     }
 }
+#endif
 
 static void c2p_screen_8bpp(unsigned char *out, const unsigned char *in)
 {
     boolean zoom_allowed = gamestate == GS_LEVEL && !menuactive && !inhelpscreens && !automapactive;
     short splitline = !zoom_allowed || viewheight == SCREENHEIGHT ? SCREENHEIGHT : SCREENHEIGHT - 32;
-    boolean have_dirty = c2p8_have_dirty;
 
-    // Only for a frame whose dirty box was given (TTDOOM). STDOOM.TOS's TT
-    // Low path converts every line, as before.
-    c2p8_have_dirty = false;
-    if (zoom_allowed && have_dirty && viewheight > 0 &&
+#ifdef TTDOOM
+    if (zoom_allowed && viewheight > 0 &&
         scaledviewwidth > SCREENWIDTH / 2 && scaledviewwidth < SCREENWIDTH)
     {
         c2p_view_8bpp(out, in, splitline);
         return;
     }
+#endif
     if (!zoom_allowed || scaledviewwidth > SCREENWIDTH / 2)
     {
-        for (short line = 0; line < splitline; line++)
-        {
-            c2p8_line(out + c2p8_stride * line, in + SCREENWIDTH * line, SCREENWIDTH);
-        }
+        // Every line, full width
+        c2p_rect_8bpp(out, in, 0, splitline, 0, SCREENWIDTH);
     }
     else if (scaledviewwidth > SCREENWIDTH / 4)
     {
         // 2x zoom: the 160-pixel-wide centre of the play area, each pixel
         // widened to two and each line shown twice
         uint16_t *wide = (uint16_t *)c2p8_wide;
-        for (short line = 0; line + 1 < splitline; line += 2)
+        const unsigned char *src = in + SCREENWIDTH * ZOOM2X_Y + 80;
+        for (short line = 0; line + 1 < splitline; line += 2, out += 2 * c2p8_stride, src += SCREENWIDTH)
         {
-            const unsigned char *src = in + SCREENWIDTH * (ZOOM2X_Y + line / 2) + 80;
             for (short x = 0; x < SCREENWIDTH / 2; x++)
                 wide[x] = src[x] * 0x0101;
-            c2p8_lines(out + c2p8_stride * line, (const unsigned char *)wide, SCREENWIDTH, 2);
+            c2p8_line2(out, (const unsigned char *)wide, SCREENWIDTH);
         }
     }
     else
     {
         // 4x zoom: the 80-pixel-wide centre, each pixel 4x4
         uint32_t *wide = c2p8_wide;
-        for (short line = 0; line + 3 < splitline; line += 4)
+        const unsigned char *src = in + SCREENWIDTH * ZOOM4X_Y + 120;
+        for (short line = 0; line + 3 < splitline; line += 4, out += 4 * c2p8_stride, src += SCREENWIDTH)
         {
-            const unsigned char *src = in + SCREENWIDTH * (ZOOM4X_Y + line / 4) + 120;
             for (short x = 0; x < SCREENWIDTH / 4; x++)
                 wide[x] = src[x] * 0x01010101UL;
-            c2p8_lines(out + c2p8_stride * line, (const unsigned char *)wide, SCREENWIDTH, 4);
+            c2p8_line4(out, (const unsigned char *)wide, SCREENWIDTH);
         }
     }
 }

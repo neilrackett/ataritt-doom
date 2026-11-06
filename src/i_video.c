@@ -308,13 +308,16 @@ void I_UpdateNoBlit (void)
 }
 
 #ifdef TTDOOM
-// The union of two dirty boxes, by hand: M_AddToBox misreads an empty box
-static void dirty_union(int *out, const int *a, const int *b)
+// What changed since the page about to be drawn last took a frame, two
+// frames ago: the union of this frame's box and the last one's, which this
+// frame's then becomes. By hand: M_AddToBox misreads an empty box.
+static void since_last(int *out, const int *now, int *last)
 {
-    out[BOXTOP] = a[BOXTOP] > b[BOXTOP] ? a[BOXTOP] : b[BOXTOP];
-    out[BOXBOTTOM] = a[BOXBOTTOM] < b[BOXBOTTOM] ? a[BOXBOTTOM] : b[BOXBOTTOM];
-    out[BOXLEFT] = a[BOXLEFT] < b[BOXLEFT] ? a[BOXLEFT] : b[BOXLEFT];
-    out[BOXRIGHT] = a[BOXRIGHT] > b[BOXRIGHT] ? a[BOXRIGHT] : b[BOXRIGHT];
+    out[BOXTOP] = now[BOXTOP] > last[BOXTOP] ? now[BOXTOP] : last[BOXTOP];
+    out[BOXBOTTOM] = now[BOXBOTTOM] < last[BOXBOTTOM] ? now[BOXBOTTOM] : last[BOXBOTTOM];
+    out[BOXLEFT] = now[BOXLEFT] < last[BOXLEFT] ? now[BOXLEFT] : last[BOXLEFT];
+    out[BOXRIGHT] = now[BOXRIGHT] > last[BOXRIGHT] ? now[BOXRIGHT] : last[BOXRIGHT];
+    memcpy(last, now, 4 * sizeof(int));
 }
 #endif
 
@@ -356,10 +359,8 @@ void I_FinishUpdate (void)
         static int last_play[4] = { MININT, MAXINT, MAXINT, MININT };
         int bar[4], play[4];
 
-        dirty_union(bar, dirtybox, last_bar);
-        dirty_union(play, playdirtybox, last_play);
-        memcpy(last_bar, dirtybox, sizeof(last_bar));
-        memcpy(last_play, playdirtybox, sizeof(last_play));
+        since_last(bar, dirtybox, last_bar);
+        since_last(play, playdirtybox, last_play);
         M_ClearBox(playdirtybox);
 
         st_screen = atari_vmode_draw_page();
@@ -398,10 +399,12 @@ void I_InitGraphics(void)
 {
 #ifdef TTDOOM
     atari_vmode_t vmode;
+#endif
 
     printf("Replacing keyboard interrupt.\n");
     old_interrupt_handler = *(void**)0x118;
     *(void**)0x118 = keyboard_interrupt;
+#ifdef TTDOOM
     printf("Setting 320x240 256-colour mode...\n");
     fflush(stdout);
     /* TT Low or Falcon 8-bit on a fresh screen. Nothing may print after
@@ -411,15 +414,12 @@ void I_InitGraphics(void)
      * draw over the picture. */
     (void)Cconws("\33f");
     st_screen = vmode.screen;
-    init_c2p_8bpp(vmode.stride, vmode.dbl, vmode.falcon);
+    init_c2p_8bpp(vmode.stride, vmode.falcon);
     /* The C2P's palette grid, a diagnostic: with -devparm only */
     if (devparm)
         draw_palette_table(st_screen);
 #else
     st_screen = Physbase();
-    printf("Replacing keyboard interrupt.\n");
-    old_interrupt_handler = *(void**)0x118;
-    *(void**)0x118 = keyboard_interrupt;
     printf("Initializing c2p tables...\n");
     int w16 = M_CheckParm("-w16");
     if (w16 && w16 + 1 < myargc) {

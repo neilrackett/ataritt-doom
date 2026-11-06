@@ -1776,8 +1776,6 @@ void WI_Drawer (void)
 {
     // Laid out for a 320x200 screen: stretched to a taller one's height,
     // over the background WI_loadData drew stretched into screens[1].
-    int oldpage = v_page;
-
     v_page = 1;
     switch (state)
     {
@@ -1798,7 +1796,7 @@ void WI_Drawer (void)
 	WI_drawNoState();
 	break;
     }
-    v_page = oldpage;
+    v_page = 0;
 }
 
 

@@ -1728,25 +1728,20 @@ void M_StartControlPanel (void)
 }
 
 
-//
-// M_Drawer
-// Called after the view has been rendered,
-// but before it has been blitted.
-//
 static void M_DrawMenuLayer (void);
 
 //
 // M_Drawer
+// Called after the view has been rendered,
+// but before it has been blitted.
 // Menus, help pages and messages are laid out for a 320x200 screen:
 // stretched to a taller one's height, as the pages behind them are.
 //
 void M_Drawer (void)
 {
-    int oldpage = v_page;
-
     v_page = 1;
     M_DrawMenuLayer ();
-    v_page = oldpage;
+    v_page = 0;
 }
 
 static void M_DrawMenuLayer (void)

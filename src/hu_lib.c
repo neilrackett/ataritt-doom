@@ -166,6 +166,10 @@ void HUlib_eraseTextLine(hu_textline_t* l)
 		// erase right border
 	    }
 	}
+	// Changed rows, for TTDOOM's shrunk-view C2P, which converts only
+	// what is marked (playdirtybox). D_Display clears dirtybox just after
+	// HU_Erase, so this does not reach the status bar's box.
+	V_MarkRect (0, l->y, SCREENWIDTH, lh);
     }
 
     lastautomapactive = automapactive;
