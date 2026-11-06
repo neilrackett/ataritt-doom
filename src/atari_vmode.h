@@ -24,6 +24,10 @@ typedef struct {
  * why TTDOOM cannot run, waits for a key and returns 0. */
 int atari_vmode_supported(void);
 
+/* User mode, before Doom's zone is allocated: sets aside the ST-RAM for the
+ * display pages, so that on a 4 MB machine the zone cannot take it. */
+void atari_vmode_reserve(void);
+
 /* Supervisor mode. Saves the desktop's mode and colours, sets the 320x240
  * 256-colour mode on fresh, cleared ST-RAM screens and fills *m (m->screen
  * is the page on screen). I_Error if

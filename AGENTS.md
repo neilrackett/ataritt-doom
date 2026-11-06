@@ -341,6 +341,13 @@ Anything that reads or publishes Xpad: read
   The palette is blacked out after the mode change (the desktop's colour 0
   would show the cleared screen white until Doom's first frame), and the
   C2P's palette grid diagnostic is drawn only with `-devparm`.
+- **Memory (4 MB):** `I_ZoneBase` (TTDOOM) reserves the ST-RAM display
+  pages first (`atari_vmode_reserve`) and then caps the zone at what is free
+  less `ZONE_SPARE` (128K for the WAD directory and stdio); with TT-RAM or
+  plenty of RAM it is the full 2.5 MB. A zone of ~2.1 MB runs the shareware
+  E1 tour and timedemo once the sounds missing from the WAD share one
+  pistol copy (`I_InitSound`: they used to cost 53 copies, 300K, for good).
+  Measured under Hatari on 4 MB TT (ST-RAM only) and Falcon (VGA, RGB).
 - **240 lines, DOS proportions:** `SCREENHEIGHT` is compile-time. 320x200
   was shown on 4:3 (DOS, ST), so TTDOOM's square-pixel 240 lines stand for
   those 200: 320x200 art (pages, menus, WI, finale) is drawn with `v_page` set

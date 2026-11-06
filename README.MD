@@ -12,7 +12,7 @@ Welcome to TTDOOM: full screen, full colour DOOM on the Atari TT or Falcon, than
 
 ## System requirements
 
-- Atari TT or Falcon with at least 2MB RAM
+- Atari TT or Falcon with at least 4MB RAM
 - 5MB hard drive space
 
 ## Installation

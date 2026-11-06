@@ -53,6 +53,7 @@ static void *screen_alloc;
 /* Double buffering: the C2P draws into the page not on screen, which is then
  * shown from the next frame. One page (and tearing) if ST-RAM is short. */
 static unsigned char *vmode_page[2];
+static long vmode_page_bytes;
 static int vmode_pages;
 static int vmode_hidden;            /* index of the page not on screen */
 static unsigned short vmode_left;   /* picture offset within a page */
@@ -111,6 +112,50 @@ int atari_vmode_supported(void)
                   "On an ST or STE, run STDOOM.TOS instead.\r\n");
 }
 
+/* Falcon: the 8-bit mode for this monitor, keeping the desktop's PAL or
+ * NTSC on RGB / TV. Also notes the desktop's mode, for the restore. */
+static short falcon_mode(void)
+{
+    old_vmode = VsetMode(-1);
+    if (VgetMonitor() == MON_VGA)
+        /* 320x480 with the VIDEL doubling lines: 320x240 */
+        return BPS8 | COL40 | VGA | VERTFLAG;
+    /* 240 lines on RGB / TV take overscan. A set or monitor made for one
+     * of PAL and NTSC may not sync to the other. */
+    return BPS8 | COL40 | (old_vmode & PAL) | OVERSCAN;
+}
+
+/* The ST-RAM for the display pages, aligned to 256 bytes as the video base
+ * registers expect: two if there is room, else one. Once only. */
+static void alloc_pages(long bytes)
+{
+    if (screen_alloc)
+        return;
+    bytes = (bytes + 255) & ~255L;
+    for (vmode_pages = 2; vmode_pages > 0; vmode_pages--)
+    {
+        screen_alloc = (void *)Mxalloc(bytes * vmode_pages + 256, 0);
+        if ((long)screen_alloc > 0)
+            break;
+        screen_alloc = NULL;
+    }
+    if (!screen_alloc)
+        I_Error("TTDOOM: not enough ST-RAM for a %ld byte screen", bytes);
+    vmode_page[0] = (unsigned char *)(((unsigned long)screen_alloc + 255) & ~255UL);
+    vmode_page[1] = vmode_pages > 1 ? vmode_page[0] + bytes : vmode_page[0];
+    vmode_page_bytes = bytes;
+}
+
+void atari_vmode_reserve(void)
+{
+    int machine = machine_type();
+
+    if (machine == MACHINE_TT)
+        alloc_pages(TT_LOW_BYTES);
+    else if (machine == MACHINE_FALCON)
+        alloc_pages(VgetSize(falcon_mode()));
+}
+
 void atari_vmode_set(atari_vmode_t *m)
 {
     int machine = machine_type();
@@ -137,21 +182,8 @@ void atari_vmode_set(atari_vmode_t *m)
         monitor = VgetMonitor();
         if (monitor == MON_MONO)
             I_Error("TTDOOM needs a colour monitor or TV (256 colours)");
-        old_vmode = VsetMode(-1);
-        if (monitor == MON_VGA)
-        {
-            /* 320x480 with the VIDEL doubling lines: 320x240 */
-            mode = BPS8 | COL40 | VGA | VERTFLAG;
-            m->stride = 320;
-        }
-        else
-        {
-            /* 240 lines on RGB / TV take overscan. Keep the desktop's PAL
-             * or NTSC: a set or monitor made for one may not sync to the
-             * other. */
-            mode = BPS8 | COL40 | (old_vmode & PAL) | OVERSCAN;
-            m->stride = FALCON_OVERSCAN_STRIDE;
-        }
+        mode = falcon_mode();
+        m->stride = (mode & OVERSCAN) ? FALCON_OVERSCAN_STRIDE : 320;
         bytes = VgetSize(mode);
         m->falcon = 1;
     }
@@ -161,22 +193,11 @@ void atari_vmode_set(atari_vmode_t *m)
         return;
     }
 
-    /* Video memory must be ST-RAM; align to 256 bytes as the video base
-     * registers expect. Two pages if there is room, else one. */
-    bytes = (bytes + 255) & ~255L;
-    for (vmode_pages = 2; vmode_pages > 0; vmode_pages--)
-    {
-        screen_alloc = (void *)Mxalloc(bytes * vmode_pages + 256, 0);
-        if ((long)screen_alloc > 0)
-            break;
-        screen_alloc = NULL;
-    }
-    if (!screen_alloc)
-        I_Error("TTDOOM: not enough ST-RAM for a %ld byte screen", bytes);
-    page = (unsigned char *)(((unsigned long)screen_alloc + 255) & ~255UL);
-    memset(page, 0, bytes * vmode_pages);
-    vmode_page[0] = page;
-    vmode_page[1] = vmode_pages > 1 ? page + bytes : page;
+    /* Video memory must be ST-RAM. Usually reserved already, before Doom's
+     * zone took the rest (atari_vmode_reserve). */
+    alloc_pages(bytes);
+    page = vmode_page[0];
+    memset(page, 0, vmode_page_bytes * vmode_pages);
     vmode_hidden = vmode_pages > 1 ? 1 : 0;
     flip_pending = 0;
 

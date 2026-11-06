@@ -46,6 +46,9 @@ rcsid[] = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp $";
 #endif
 #include "i_system.h"
 #include "i_xpad.h"
+#ifdef TTDOOM
+#include "atari_vmode.h"
+#endif
 #include "m_argv.h"
 #include "atari_sfp004.h"
 
@@ -82,9 +85,30 @@ int  I_GetHeapSize (void)
     return ram_used;
 }
 
+#ifdef TTDOOM
+// What is allocated outside the zone after it: the WAD directory (about
+// 50K for the registered DOOM.WAD), the DMA sound buffers, stdio.
+#define ZONE_SPARE	(128*1024L)
+#endif
+
 byte* I_ZoneBase (int*	size)
 {
     *size = ram_used;
+#ifdef TTDOOM
+    // The display pages first, in ST-RAM: on a 4 MB TT or Falcon the zone
+    // would otherwise leave no room for them. Then the zone takes what is
+    // free, up to ram_used, less ZONE_SPARE. With TT-RAM it is all of
+    // ram_used there, as before.
+    atari_vmode_reserve();
+    {
+	long	st = Mxalloc(-1, 0);
+	long	alt = Mxalloc(-1, 1);
+	long	avail = (alt > st ? alt : st) - ZONE_SPARE;
+
+	if (avail < *size)
+	    *size = avail;
+    }
+#endif
     unsigned long memavail = Malloc(-1);
     printf("Memory available: %ld\n", memavail);
     printf("Trying to allocate %d bytes\n", *size);

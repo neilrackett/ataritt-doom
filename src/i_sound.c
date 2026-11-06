@@ -880,11 +880,23 @@ I_InitSound()
   for (i=1 ; i<NUMSFX ; i++)
   { 
     // Alias? Example is the chaingun sound linked to pistol.
-    if (!S_sfx[i].link)
+    char lumpname[20];
+
+    sprintf(lumpname, "ds%s", S_sfx[i].name);
+    if (!S_sfx[i].link && i != sfx_pistol && W_CheckNumForName(lumpname) == -1)
+    {
+      // Not in this WAD (DOOM II's sounds, with DOOM): getsfx plays the
+      // pistol instead, but would pad another copy of it for each one,
+      // which with the shareware WAD is 53 copies and 300K of zone
+      // memory for good. Share the one copy. (sfx_pistol is loaded first.)
+      S_sfx[i].data = S_sfx[sfx_pistol].data;
+      lengths[i] = lengths[sfx_pistol];
+    }
+    else if (!S_sfx[i].link)
     {
       // Load data from WAD file.
       S_sfx[i].data = getsfx( S_sfx[i].name, &lengths[i] );
-    }	
+    }
     else
     {
       // Previously loaded already?
