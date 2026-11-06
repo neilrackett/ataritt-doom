@@ -28,6 +28,12 @@
 #define MFP_GPIP        (*(volatile unsigned char *)0xFFFFFA01L)
 #define DMASND_CTRL     (*(volatile unsigned char *)0xFFFF8901L)
 #define FRCLOCK         (*(volatile long *)0x466L)
+#define HZ200           (*(volatile unsigned long *)0x4BAL)
+/* Video base address, high and middle bytes (pages are 256-byte aligned, so
+ * the low byte stays 0). The video hardware reads them at the start of each
+ * frame. */
+#define VIDEO_BASE_HI   (*(volatile unsigned char *)0xFFFF8201L)
+#define VIDEO_BASE_MID  (*(volatile unsigned char *)0xFFFF8203L)
 
 #define TT_LOW_REZ      7
 #define TT_LOW_BYTES    (320L * 480)
@@ -44,6 +50,15 @@ static unsigned short old_tt_palette[256];
 static unsigned long old_falcon_palette[256];
 static unsigned short old_st_palette[16];
 static void *screen_alloc;
+/* Double buffering: the C2P draws into the page not on screen, which is then
+ * shown from the next frame. One page (and tearing) if ST-RAM is short. */
+static unsigned char *vmode_page[2];
+static int vmode_pages;
+static int vmode_hidden;            /* index of the page not on screen */
+static unsigned short vmode_left;   /* picture offset within a page */
+static int flip_pending;
+static long flip_frame;             /* _frclock when the flip was asked for */
+static unsigned long flip_hz;       /* _hz_200 then */
 static int tt_colour_monitor = 1;   /* read at startup, before sound plays */
 
 static int machine_type(void)
@@ -147,15 +162,23 @@ void atari_vmode_set(atari_vmode_t *m)
     }
 
     /* Video memory must be ST-RAM; align to 256 bytes as the video base
-     * registers expect. */
-    screen_alloc = (void *)Mxalloc(bytes + 256, 0);
-    if ((long)screen_alloc <= 0)
+     * registers expect. Two pages if there is room, else one. */
+    bytes = (bytes + 255) & ~255L;
+    for (vmode_pages = 2; vmode_pages > 0; vmode_pages--)
     {
+        screen_alloc = (void *)Mxalloc(bytes * vmode_pages + 256, 0);
+        if ((long)screen_alloc > 0)
+            break;
         screen_alloc = NULL;
-        I_Error("TTDOOM: not enough ST-RAM for a %ld byte screen", bytes);
     }
+    if (!screen_alloc)
+        I_Error("TTDOOM: not enough ST-RAM for a %ld byte screen", bytes);
     page = (unsigned char *)(((unsigned long)screen_alloc + 255) & ~255UL);
-    memset(page, 0, bytes);
+    memset(page, 0, bytes * vmode_pages);
+    vmode_page[0] = page;
+    vmode_page[1] = vmode_pages > 1 ? page + bytes : page;
+    vmode_hidden = vmode_pages > 1 ? 1 : 0;
+    flip_pending = 0;
 
     /* The desktop's mode and colours, before the mode change resets them */
     old_logbase = Logbase();
@@ -171,17 +194,50 @@ void atari_vmode_set(atari_vmode_t *m)
         for (i = 0; i < 256; i++)
             old_falcon_palette[i] = FALCON_PALETTE[i];
         (void)VsetScreen(page, page, 3, mode);
-        m->screen = page + ((mode & OVERSCAN) ? FALCON_OVERSCAN_LEFT : 0);
+        vmode_left = (mode & OVERSCAN) ? FALCON_OVERSCAN_LEFT : 0;
     }
     else
     {
         for (i = 0; i < 256; i++)
             old_tt_palette[i] = TT_PALETTE[i];
         (void)Setscreen(page, page, TT_LOW_REZ);
-        m->screen = page;
+        vmode_left = 0;
     }
     I_SoundResumeVbl();
+    m->screen = page + vmode_left;
     vmode_machine = machine;
+}
+
+unsigned char *atari_vmode_draw_page(void)
+{
+    if (flip_pending)
+    {
+        /* The page shown before the last flip is scanned out until the video
+         * hardware next reads the base address, at the start of a frame. By
+         * the second VBL after the flip it has, wherever in the frame the
+         * flip landed. Bounded by the 200 Hz timer (two 50 Hz frames are 8
+         * ticks) in case nothing counts VBLs. In play this rarely waits: the
+         * game logic and 3D render run between flip and draw. */
+        while (FRCLOCK - flip_frame < 2 && HZ200 - flip_hz < 10)
+            ;
+        flip_pending = 0;
+    }
+    return vmode_page[vmode_hidden] + vmode_left;
+}
+
+void atari_vmode_show_page(void)
+{
+    unsigned long base;
+
+    if (vmode_pages < 2)
+        return;
+    base = (unsigned long)vmode_page[vmode_hidden];
+    VIDEO_BASE_HI = (unsigned char)(base >> 16);
+    VIDEO_BASE_MID = (unsigned char)(base >> 8);
+    flip_frame = FRCLOCK;
+    flip_hz = HZ200;
+    flip_pending = 1;
+    vmode_hidden ^= 1;
 }
 
 void atari_vmode_restore(void)
@@ -222,6 +278,8 @@ void atari_vmode_restore(void)
     I_SoundResumeVbl();
 
     vmode_machine = 0;
+    vmode_pages = 0;
+    flip_pending = 0;
     if (screen_alloc)
     {
         (void)Mfree(screen_alloc);

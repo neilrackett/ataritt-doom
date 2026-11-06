@@ -1004,6 +1004,11 @@ static void (*pOldVblVec)() = 0;
 
 __attribute__((interrupt)) void vbl_interrupt() {
   static boolean in_vbl = false;
+#ifdef TTDOOM
+  /* Count frames as TOS's VBL handler, which this one replaces, would:
+   * TTDOOM's page flip (atari_vmode.c) waits on _frclock. */
+  (*(volatile long *)0x466)++;
+#endif
   if (in_vbl) return;
   in_vbl = true;
   //volatile unsigned short *reg = (unsigned short*) 0xff8240;

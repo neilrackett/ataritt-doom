@@ -215,12 +215,27 @@ make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION
   (`v_video.h`); status-bar Y positions use `ST_YOFS()`; `BASEYCENTER` and
   `skytexturemid` follow `SCREENHEIGHT`. At 200 these all reduce to the
   original constants (ST code verified identical by disassembly).
+- **Double buffering:** `atari_vmode.c` allocates two ST-RAM pages;
+  `I_FinishUpdate` draws into `atari_vmode_draw_page()` and flips with
+  `atari_vmode_show_page()` (writes `$FF8201/03`, latched at the next frame).
+  Drawing into a page waits until 2 VBLs (`_frclock`) after the flip that hid
+  it. The status bar's dirty box is the union of this frame's and the last
+  (each page last took the bar two frames ago).
+- **C2P:** a merge C2P (`C2P8_MERGE_FN` in `atari_c2p.c`): five register
+  exchange passes per 16 pixels and long writes, instantiated per scanline
+  stride (320/384) and copy count (lines doubled on TT, zoom repeats), so a
+  zoomed line is converted once. ~2.5x (TT) / ~4x (Falcon) faster than the
+  old `movep` version under Hatari; bit-identical output.
 
 ### Hard-won fixes (do not regress)
 
-- **STDOOM's sound VBL replaces `$70` without chaining**, so `_frclock` stops.
-  `Setscreen`/`VsetScreen` with a resolution change waits for a VBL and hangs.
-  Wrap such XBIOS calls in `I_SoundSuspendVbl()`/`I_SoundResumeVbl()`.
+- **STDOOM's sound VBL replaces `$70` without chaining**, so TOS's VBL work
+  stops. `Setscreen`/`VsetScreen` with a resolution change waits for a VBL and
+  hangs: wrap such XBIOS calls in `I_SoundSuspendVbl()`/`I_SoundResumeVbl()`.
+  Under `TTDOOM` the sound VBL increments `_frclock` itself, which the page
+  flip waits on.
+- **Don't union dirty boxes with `M_AddToBox`**: its `else if` misreads an
+  empty (cleared) box. `I_FinishUpdate` takes min/max by hand.
 - **TT GPIP bit 7 (mono detect) is XORed with the DMA-sound play line**, so it
   reads inverted once sound is playing. Read it at startup
   (`atari_vmode_supported()` in `main`, before `I_InitSound`).

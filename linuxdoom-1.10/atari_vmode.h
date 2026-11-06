@@ -25,9 +25,20 @@ typedef struct {
 int atari_vmode_supported(void);
 
 /* Supervisor mode. Saves the desktop's mode and colours, sets the 320x240
- * 256-colour mode on a fresh, cleared ST-RAM screen and fills *m. I_Error if
+ * 256-colour mode on fresh, cleared ST-RAM screens and fills *m (m->screen
+ * is the page on screen). I_Error if
  * the monitor or memory cannot do it. */
 void atari_vmode_set(atari_vmode_t *m);
+
+/* Supervisor mode. Double buffering: the page to draw the next frame into,
+ * at the same picture offset and stride as m->screen. Waits, if need be,
+ * until the page shown before the last atari_vmode_show_page() has left the
+ * screen. With one page (short of ST-RAM) this is the page on screen. */
+unsigned char *atari_vmode_draw_page(void);
+
+/* Supervisor mode. Shows the page from atari_vmode_draw_page() from the
+ * next frame on. */
+void atari_vmode_show_page(void);
 
 /* Supervisor mode. Puts the desktop's mode and colours back; does nothing if
  * atari_vmode_set() never ran. Safe to call from I_Error. */

@@ -329,8 +329,30 @@ void I_FinishUpdate (void)
     
     }
 
+#ifdef TTDOOM
+    {
+        /* Double buffered: draw into the page not on screen, then show it.
+         * That page last took the status bar two frames ago, so it needs the
+         * cells changed in the frame before this one as well as this one. */
+        static int last_box[4] = { MININT, MAXINT, MAXINT, MININT };
+        int box[4];
+
+        /* Union by hand: M_AddToBox misreads an empty box */
+        box[BOXTOP] = dirtybox[BOXTOP] > last_box[BOXTOP] ? dirtybox[BOXTOP] : last_box[BOXTOP];
+        box[BOXBOTTOM] = dirtybox[BOXBOTTOM] < last_box[BOXBOTTOM] ? dirtybox[BOXBOTTOM] : last_box[BOXBOTTOM];
+        box[BOXLEFT] = dirtybox[BOXLEFT] < last_box[BOXLEFT] ? dirtybox[BOXLEFT] : last_box[BOXLEFT];
+        box[BOXRIGHT] = dirtybox[BOXRIGHT] > last_box[BOXRIGHT] ? dirtybox[BOXRIGHT] : last_box[BOXRIGHT];
+        memcpy(last_box, dirtybox, sizeof(last_box));
+
+        st_screen = atari_vmode_draw_page();
+        c2p_screen(st_screen, screens[0]);
+        c2p_statusbar(st_screen, screens[0], box[BOXBOTTOM], box[BOXTOP] + 1, box[BOXLEFT], box[BOXRIGHT] + 1);
+        atari_vmode_show_page();
+    }
+#else
     c2p_screen(st_screen, screens[0]);
     c2p_statusbar(st_screen, screens[0], dirtybox[BOXBOTTOM], dirtybox[BOXTOP] + 1, dirtybox[BOXLEFT], dirtybox[BOXRIGHT] + 1);
+#endif
 }
 
 

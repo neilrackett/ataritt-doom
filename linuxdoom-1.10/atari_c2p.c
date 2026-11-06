@@ -7280,11 +7280,6 @@ static unsigned long c2p_2x_table[4][256][4];
 // [phase 0..3][color 0..255][pixel 0..1]
 static unsigned long c2p_4x_table[4][256][2];
 
-// Small table for C2P on the Atari TT where the table should fit in cache.
-// Converts 4 bits of a chunky pixel into a planar representation that can
-// be written into planar video memory using movep. Sets bits 0, 8, 16 and 24.
-static uint32_t c2p_tt_table[16];
-
 static unsigned short convert_channel(unsigned char v)
 {
     unsigned short r = (v & 0xe0) >> 5; // Bits 7,6,5 shifted to 2,1,0
@@ -7459,11 +7454,16 @@ unsigned long bayer4_midrez_pdata(const unsigned char *weights, short phase, sho
 static void c2p_1x_lorez(register unsigned char *out, const unsigned char *in, unsigned short pixels, unsigned long table[][8]);
 static void c2p_1x_midrez(register unsigned char *out, const unsigned char *in, unsigned short pixels, unsigned long table[][8]);
 static void c2p_1x_hirez(register unsigned char *out, const unsigned char *in, unsigned short pixels, unsigned long table[][8]);
-static void c2p_1x_tt_lorez(register unsigned char *out, const unsigned char *in, unsigned short pixels, u_int32_t *table);
-static void c2p_1x_8bpp(register unsigned char *out, const unsigned char *in, unsigned short pixels, u_int32_t *table);
 static void c2p_screen_midrez(unsigned char *out, const unsigned char *in);
 static void c2p_screen_hirez(unsigned char *out, const unsigned char *in);
 static void c2p_screen_8bpp(unsigned char *out, const unsigned char *in);
+static void c2p8_320x1(unsigned char *out, const unsigned char *in, unsigned short pixels);
+static void c2p8_320x2(unsigned char *out, const unsigned char *in, unsigned short pixels);
+static void c2p8_320x4(unsigned char *out, const unsigned char *in, unsigned short pixels);
+static void c2p8_320x8(unsigned char *out, const unsigned char *in, unsigned short pixels);
+static void c2p8_384x1(unsigned char *out, const unsigned char *in, unsigned short pixels);
+static void c2p8_384x2(unsigned char *out, const unsigned char *in, unsigned short pixels);
+static void c2p8_384x4(unsigned char *out, const unsigned char *in, unsigned short pixels);
 
 // Zoomed views (screen sizes 2..5) render a small view in the centre of the
 // play area and the C2P magnifies it to fill the play area. Source rows
@@ -7478,12 +7478,21 @@ static void c2p_screen_8bpp(unsigned char *out, const unsigned char *in);
 static unsigned short c2p8_stride = 640;
 static unsigned char c2p8_dbl = 1;
 
+typedef void (*c2p8_func)(unsigned char *out, const unsigned char *in, unsigned short pixels);
+static c2p8_func c2p8_funcs[3];     // writing 1, 2 or 4 picture lines
+// A zoomed line, widened: long-aligned, as the C2P reads it by the long
+static uint32_t c2p8_wide[SCREENWIDTH / 4];
+
+// Converts one chunky line and writes it to `lines` picture lines (1, 2 or
+// 4) from out: zoomed views convert each source line once.
+static inline void c2p8_lines(unsigned char *out, const unsigned char *in, unsigned short pixels, short lines)
+{
+    c2p8_funcs[lines >> 1](out, in, pixels);
+}
+
 static inline void c2p8_line(unsigned char *out, const unsigned char *in, unsigned short pixels)
 {
-    if (c2p8_dbl)
-        c2p_1x_tt_lorez(out, in, pixels, c2p_tt_table);
-    else
-        c2p_1x_8bpp(out, in, pixels, c2p_tt_table);
+    c2p8_funcs[0](out, in, pixels);
 }
 
 void c2p_statusbar_lorez(unsigned char *out, const unsigned char *in, short y_begin, short y_end, short x_begin, short x_end)
@@ -7708,18 +7717,26 @@ void init_c2p_8bpp(unsigned short stride, int dbl, int falcon)
         save_palette = save_tt_palette;
         set_doom_palette = set_tt_doom_palette;
     }
-    for (int i = 0; i < 16; i++)
+    if (c2p8_dbl)
     {
-        uint32_t pdata = 0;
-        if (i & 1)
-            pdata |= 1 << 24;
-        if (i & 2)
-            pdata |= 1 << 16;
-        if (i & 4)
-            pdata |= 1 << 8;
-        if (i & 8)
-            pdata |= 1 << 0;
-        c2p_tt_table[i] = pdata;
+        // TT Low: two 320-byte scanlines a picture line
+        c2p8_funcs[0] = c2p8_320x2;
+        c2p8_funcs[1] = c2p8_320x4;
+        c2p8_funcs[2] = c2p8_320x8;
+    }
+    else if (stride == 384)
+    {
+        // Falcon RGB / TV overscan
+        c2p8_funcs[0] = c2p8_384x1;
+        c2p8_funcs[1] = c2p8_384x2;
+        c2p8_funcs[2] = c2p8_384x4;
+    }
+    else
+    {
+        // Falcon VGA, the VIDEL doubling lines
+        c2p8_funcs[0] = c2p8_320x1;
+        c2p8_funcs[1] = c2p8_320x2;
+        c2p8_funcs[2] = c2p8_320x4;
     }
 }
 
@@ -7889,165 +7906,125 @@ static void c2p_1x_hirez(register unsigned char *out, const unsigned char *in, u
     }
 }
 
-// 8-plane C2P for one line: 16-pixel groups of 8 interleaved bitplane words
-// (TT Low and Falcon 8-bit share the layout), using movep and the 16-entry
-// c2p_tt_table. With DBL set, every group is also written 320 bytes on, the
-// scanline below: TT Low is 480 lines and cannot double them itself. The
-// Falcon VIDEL doubles lines on VGA, so it uses the single-line version.
-#define C2P_8BPP_LINE(DBL) \
-    if (pixels < 16) \
+// 8-plane C2P (TT Low and Falcon 8-bit share the layout: 16-pixel groups of
+// 8 interleaved bitplane words). A merge C2P: the 16 chunky pixels of a group,
+// four longs a b c d, are transposed in registers by five exchange passes
+// (each swaps one bit of the register number with one bit position, as
+// t = ((x << s) ^ y) & mask; y ^= t; x ^= t >> s), then stored as four longs
+// - no table, and long rather than byte (movep) writes, which matters most
+// on the Falcon's 16-bit bus. Roles a=d2 b=d0 c=d3 d=d1 leave the plane words
+// in d0-d3 in memory order for movem. The same group is stored to COPIES
+// scanlines SCAN bytes apart: TT Low cannot double lines (480 of them), and
+// zoomed views repeat each line. Checked bit-for-bit against a plain C
+// reference, and about 2.5x (TT) / 4x (Falcon) faster than the movep version
+// it replaced, under Hatari.
+#define C2P8_MERGE_FN(NAME, SCAN, COPIES) \
+static void NAME(unsigned char *out, const unsigned char *in, unsigned short pixels) \
+{ \
+    const unsigned char *end = in + (pixels & ~15); \
+    if (in == end) \
         return; \
-    uint32_t p03, p47, tmp; \
-    uint32_t groups = (pixels / 16) - 1; \
     asm volatile( \
-        /* Loop over 16-pixel groups */ \
-        "0:                                     \n\t" \
- \
-        /* Read 8 chunky pixels from memory */ \
-        "movem.l    (%[in])+,%%d0-%%d1          \n\t" \
- \
-        /* Process pixel 0 */ \
-        "rol.l      #6,%%d0                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d0,%[tmp]                 \n\t" \
-        "move.l     (%[table],%[tmp].w),%[p47]  \n\t" \
-        "rol.l      #4,%%d0                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d0,%[tmp]                 \n\t" \
-        "move.l     (%[table],%[tmp].w),%[p03]  \n\t" \
- \
-        /* Process pixels 1-3 */ \
-        ".rept      3                           \n\t" \
-        "rol.l      #4,%%d0                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d0,%[tmp]                 \n\t" \
-        "add.l      %[p47],%[p47]               \n\t" \
-        "or.l       (%[table],%[tmp].w),%[p47]  \n\t" \
-        "rol.l      #4,%%d0                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d0,%[tmp]                 \n\t" \
-        "add.l      %[p03],%[p03]               \n\t" \
-        "or.l       (%[table],%[tmp].w),%[p03]  \n\t" \
-        ".endr                                  \n\t" \
- \
-        /* Process pixel 4 */ \
-        "rol.l      #6,%%d1                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d1,%[tmp]                 \n\t" \
-        "add.l      %[p47],%[p47]               \n\t" \
-        "or.l       (%[table],%[tmp].w),%[p47]  \n\t" \
-        "rol.l      #4,%%d1                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d1,%[tmp]                 \n\t" \
-        "add.l      %[p03],%[p03]               \n\t" \
-        "or.l       (%[table],%[tmp].w),%[p03]  \n\t" \
- \
-        /* Process pixels 5-7 */ \
-        ".rept      3                           \n\t" \
-        "rol.l      #4,%%d1                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d1,%[tmp]                 \n\t" \
-        "add.l      %[p47],%[p47]               \n\t" \
-        "or.l       (%[table],%[tmp].w),%[p47]  \n\t" \
-        "rol.l      #4,%%d1                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d1,%[tmp]                 \n\t" \
-        "add.l      %[p03],%[p03]               \n\t" \
-        "or.l       (%[table],%[tmp].w),%[p03]  \n\t" \
-        ".endr                                  \n\t" \
- \
-        /* Write pixels 0-7 */ \
-        "movep.l    %[p03],(%[out],0)           \n\t" \
-        ".if %c[dbl]                            \n\t" \
-        "movep.l    %[p03],(%[out],320)         \n\t" \
-        ".endif                                 \n\t" \
-        "movep.l    %[p47],(%[out],8)           \n\t" \
-        ".if %c[dbl]                            \n\t" \
-        "movep.l    %[p47],(%[out],328)         \n\t" \
-        ".endif                                 \n\t" \
- \
-        /* Read another 8 chunky pixels from memory */ \
-        "movem.l    (%[in])+,%%d0-%%d1          \n\t" \
- \
-        /* Process pixel 0 */ \
-        "rol.l      #6,%%d0                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d0,%[tmp]                 \n\t" \
-        "move.l     (%[table],%[tmp].w),%[p47]  \n\t" \
-        "rol.l      #4,%%d0                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d0,%[tmp]                 \n\t" \
-        "move.l     (%[table],%[tmp].w),%[p03]  \n\t" \
- \
-        /* Process pixels 1-3 */ \
-        ".rept      3                           \n\t" \
-        "rol.l      #4,%%d0                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d0,%[tmp]                 \n\t" \
-        "add.l      %[p47],%[p47]               \n\t" \
-        "or.l       (%[table],%[tmp].w),%[p47]  \n\t" \
-        "rol.l      #4,%%d0                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d0,%[tmp]                 \n\t" \
-        "add.l      %[p03],%[p03]               \n\t" \
-        "or.l       (%[table],%[tmp].w),%[p03]  \n\t" \
-        ".endr                                  \n\t" \
- \
-        /* Process pixel 4 */ \
-        "rol.l      #6,%%d1                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d1,%[tmp]                 \n\t" \
-        "add.l      %[p47],%[p47]               \n\t" \
-        "or.l       (%[table],%[tmp].w),%[p47]  \n\t" \
-        "rol.l      #4,%%d1                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d1,%[tmp]                 \n\t" \
-        "add.l      %[p03],%[p03]               \n\t" \
-        "or.l       (%[table],%[tmp].w),%[p03]  \n\t" \
- \
-        /* Process pixels 5-7 */ \
-        ".rept      3                           \n\t" \
-        "rol.l      #4,%%d1                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d1,%[tmp]                 \n\t" \
-        "add.l      %[p47],%[p47]               \n\t" \
-        "or.l       (%[table],%[tmp].w),%[p47]  \n\t" \
-        "rol.l      #4,%%d1                     \n\t" \
-        "moveq      #60,%[tmp]                  \n\t" \
-        "and.l      %%d1,%[tmp]                 \n\t" \
-        "add.l      %[p03],%[p03]               \n\t" \
-        "or.l       (%[table],%[tmp].w),%[p03]  \n\t" \
-        ".endr                                  \n\t" \
- \
-        /* Write pixels 0-7 */ \
-        "movep.l    %[p03],(%[out],1)           \n\t" \
-        ".if %c[dbl]                            \n\t" \
-        "movep.l    %[p03],(%[out],321)         \n\t" \
-        ".endif                                 \n\t" \
-        "movep.l    %[p47],(%[out],9)           \n\t" \
-        ".if %c[dbl]                            \n\t" \
-        "movep.l    %[p47],(%[out],329)         \n\t" \
-        ".endif                                 \n\t" \
- \
-        /* Increment counters */ \
-        "lea        (%[out],16),%[out]          \n\t" \
- \
-        /* Next pixel group */ \
-        "dbra.w     %[groups],0b                \n\t" \
-        : [in] "+&a"(in), [out] "+&a"(out), [groups] "+&d"(groups), [tmp] "=&d"(tmp), [p03] "=&d"(p03), [p47] "=&d"(p47) \
-        : [table] "a"(table), [dbl] "i"(DBL) \
-        : "d0", "d1", "memory", "cc"); \
-    /* end of C2P_8BPP_LINE */
-
-static void c2p_1x_tt_lorez(register unsigned char *out, const unsigned char *in, unsigned short pixels, uint32_t *table)
-{
-    C2P_8BPP_LINE(1)
+        "move.l  #0xFF00FF00,%%d5            \n\t" \
+        "move.l  #0xAAAAAAAA,%%d6            \n\t" \
+        "move.l  #0xF0F0F0F0,%%d7            \n\t" \
+        "0:                                  \n\t" \
+        "move.l  (%[in])+,%%d2               \n\t" \
+        "move.l  (%[in])+,%%d0               \n\t" \
+        "move.l  (%[in])+,%%d3               \n\t" \
+        "move.l  (%[in])+,%%d1               \n\t" \
+        /* 1: 8-bit exchange, (a,c) (b,d) */ \
+        "move.l  %%d2,%%d4                   \n\t" \
+        "lsl.l   #8,%%d4                     \n\t" \
+        "eor.l   %%d3,%%d4                   \n\t" \
+        "and.l   %%d5,%%d4                   \n\t" \
+        "eor.l   %%d4,%%d3                   \n\t" \
+        "lsr.l   #8,%%d4                     \n\t" \
+        "eor.l   %%d4,%%d2                   \n\t" \
+        "move.l  %%d0,%%d4                   \n\t" \
+        "lsl.l   #8,%%d4                     \n\t" \
+        "eor.l   %%d1,%%d4                   \n\t" \
+        "and.l   %%d5,%%d4                   \n\t" \
+        "eor.l   %%d4,%%d1                   \n\t" \
+        "lsr.l   #8,%%d4                     \n\t" \
+        "eor.l   %%d4,%%d0                   \n\t" \
+        /* 2: 1-bit exchange, (a,c) (b,d) */ \
+        "move.l  %%d2,%%d4                   \n\t" \
+        "add.l   %%d4,%%d4                   \n\t" \
+        "eor.l   %%d3,%%d4                   \n\t" \
+        "and.l   %%d6,%%d4                   \n\t" \
+        "eor.l   %%d4,%%d3                   \n\t" \
+        "lsr.l   #1,%%d4                     \n\t" \
+        "eor.l   %%d4,%%d2                   \n\t" \
+        "move.l  %%d0,%%d4                   \n\t" \
+        "add.l   %%d4,%%d4                   \n\t" \
+        "eor.l   %%d1,%%d4                   \n\t" \
+        "and.l   %%d6,%%d4                   \n\t" \
+        "eor.l   %%d4,%%d1                   \n\t" \
+        "lsr.l   #1,%%d4                     \n\t" \
+        "eor.l   %%d4,%%d0                   \n\t" \
+        /* 3: 16-bit exchange, crossed: a.hi <-> c.lo, b.hi <-> d.lo */ \
+        "swap    %%d2                        \n\t" \
+        "move.w  %%d3,%%d4                   \n\t" \
+        "move.w  %%d2,%%d3                   \n\t" \
+        "move.w  %%d4,%%d2                   \n\t" \
+        "swap    %%d2                        \n\t" \
+        "swap    %%d0                        \n\t" \
+        "move.w  %%d1,%%d4                   \n\t" \
+        "move.w  %%d0,%%d1                   \n\t" \
+        "move.w  %%d4,%%d0                   \n\t" \
+        "swap    %%d0                        \n\t" \
+        /* 4: 4-bit exchange, (a,b) (c,d) */ \
+        "move.l  %%d2,%%d4                   \n\t" \
+        "lsl.l   #4,%%d4                     \n\t" \
+        "eor.l   %%d0,%%d4                   \n\t" \
+        "and.l   %%d7,%%d4                   \n\t" \
+        "eor.l   %%d4,%%d0                   \n\t" \
+        "lsr.l   #4,%%d4                     \n\t" \
+        "eor.l   %%d4,%%d2                   \n\t" \
+        "move.l  %%d3,%%d4                   \n\t" \
+        "lsl.l   #4,%%d4                     \n\t" \
+        "eor.l   %%d1,%%d4                   \n\t" \
+        "and.l   %%d7,%%d4                   \n\t" \
+        "eor.l   %%d4,%%d1                   \n\t" \
+        "lsr.l   #4,%%d4                     \n\t" \
+        "eor.l   %%d4,%%d3                   \n\t" \
+        /* 5: 2-bit exchange, crossed, (c,a) (d,b) */ \
+        "move.l  %%d3,%%d4                   \n\t" \
+        "lsl.l   #2,%%d4                     \n\t" \
+        "eor.l   %%d2,%%d4                   \n\t" \
+        "and.l   #0xCCCCCCCC,%%d4            \n\t" \
+        "eor.l   %%d4,%%d2                   \n\t" \
+        "lsr.l   #2,%%d4                     \n\t" \
+        "eor.l   %%d4,%%d3                   \n\t" \
+        "move.l  %%d1,%%d4                   \n\t" \
+        "lsl.l   #2,%%d4                     \n\t" \
+        "eor.l   %%d0,%%d4                   \n\t" \
+        "and.l   #0xCCCCCCCC,%%d4            \n\t" \
+        "eor.l   %%d4,%%d0                   \n\t" \
+        "lsr.l   #2,%%d4                     \n\t" \
+        "eor.l   %%d4,%%d1                   \n\t" \
+        /* Store planes 0-7 to each scanline */ \
+        ".set    c2p8_ofs,0                  \n\t" \
+        ".rept   %c[copies]                  \n\t" \
+        "movem.l %%d0-%%d3,c2p8_ofs(%[out])  \n\t" \
+        ".set    c2p8_ofs,c2p8_ofs+%c[scan]  \n\t" \
+        ".endr                               \n\t" \
+        "lea     16(%[out]),%[out]           \n\t" \
+        "cmp.l   %[in],%[end]                \n\t" \
+        "bne.w   0b                          \n\t" \
+        : [in] "+a"(in), [out] "+a"(out) \
+        : [end] "a"(end), [scan] "i"(SCAN), [copies] "i"(COPIES) \
+        : "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "memory", "cc"); \
 }
 
-static void c2p_1x_8bpp(register unsigned char *out, const unsigned char *in, unsigned short pixels, uint32_t *table)
-{
-    C2P_8BPP_LINE(0)
-}
+C2P8_MERGE_FN(c2p8_320x1, 320, 1)
+C2P8_MERGE_FN(c2p8_320x2, 320, 2)
+C2P8_MERGE_FN(c2p8_320x4, 320, 4)
+C2P8_MERGE_FN(c2p8_320x8, 320, 8)
+C2P8_MERGE_FN(c2p8_384x1, 384, 1)
+C2P8_MERGE_FN(c2p8_384x2, 384, 2)
+C2P8_MERGE_FN(c2p8_384x4, 384, 4)
 
 static void c2p_2x_lorez(register unsigned char *out, const unsigned char *in, unsigned short pixels, unsigned long table[][4])
 {
@@ -8601,27 +8578,25 @@ static void c2p_screen_8bpp(unsigned char *out, const unsigned char *in)
     {
         // 2x zoom: the 160-pixel-wide centre of the play area, each pixel
         // widened to two and each line shown twice
-        uint16_t wide[SCREENWIDTH / 2];
+        uint16_t *wide = (uint16_t *)c2p8_wide;
         for (short line = 0; line + 1 < splitline; line += 2)
         {
             const unsigned char *src = in + SCREENWIDTH * (ZOOM2X_Y + line / 2) + 80;
             for (short x = 0; x < SCREENWIDTH / 2; x++)
                 wide[x] = src[x] * 0x0101;
-            c2p8_line(out + c2p8_stride * line, (const unsigned char *)wide, SCREENWIDTH);
-            c2p8_line(out + c2p8_stride * (line + 1), (const unsigned char *)wide, SCREENWIDTH);
+            c2p8_lines(out + c2p8_stride * line, (const unsigned char *)wide, SCREENWIDTH, 2);
         }
     }
     else
     {
         // 4x zoom: the 80-pixel-wide centre, each pixel 4x4
-        uint32_t wide[SCREENWIDTH / 4];
+        uint32_t *wide = c2p8_wide;
         for (short line = 0; line + 3 < splitline; line += 4)
         {
             const unsigned char *src = in + SCREENWIDTH * (ZOOM4X_Y + line / 4) + 120;
             for (short x = 0; x < SCREENWIDTH / 4; x++)
                 wide[x] = src[x] * 0x01010101UL;
-            for (short i = 0; i < 4; i++)
-                c2p8_line(out + c2p8_stride * (line + i), (const unsigned char *)wide, SCREENWIDTH);
+            c2p8_lines(out + c2p8_stride * line, (const unsigned char *)wide, SCREENWIDTH, 4);
         }
     }
 }
