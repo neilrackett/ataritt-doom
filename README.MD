@@ -76,6 +76,7 @@ This project also includes some of my abandoned STDOOM experiments, with various
 - [DOOM Accelerator](sidecart/README.md) for [SidecarTridge Multi-device](https://sidecartridge.com) to handle C2P
 - Auto switch to 16MHz+cache on Atari Mega STE
 - Support for SFP-004 memory mapped FPU if you've installed a 68881 or 68882 FPU
+- Fixed low detail graphics mode
 
 They help a little, but If you really want to run DOOM on an ST, download [MD/DOOM](https://neilrackett.com/atarist/md-doom) for your SidecarT instead.
 

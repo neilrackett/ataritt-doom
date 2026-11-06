@@ -1,11 +1,11 @@
 name: Release
 
-# Rolling release: build TTDOOM.TOS, move the lightweight "latest" tag
-# onto the commit it was built from, and replace TTDOOM.TOS on the
-# "latest" release. The release's title and notes are left exactly as
-# they are -- `gh release upload` touches assets only -- and so are its
-# other files: nothing else is built or uploaded here. The asset name
-# never changes, so a download link handed to someone keeps working.
+# Rolling release: build TTDOOM.TOS and STDOOM.TOS, move the lightweight
+# "latest" tag onto the commit they were built from, and replace both on
+# the "latest" release. The release's title and notes are left exactly
+# as they are -- `gh release upload` touches assets only -- and so are
+# its other files: nothing else is built or uploaded here. The asset
+# names never change, so a download link handed to someone keeps working.
 
 on:
   # Anything landing on main is a release: a merge, or a direct push.
@@ -15,7 +15,7 @@ on:
     branches:
       - main
     # A push that only touches prose, the screenshots or the SidecarTridge
-    # firmware cannot change TTDOOM.TOS. GitHub still runs the job when a
+    # firmware cannot change either program. GitHub still runs the job when a
     # push touches anything else as well, and workflow_dispatch forces
     # one by hand.
     paths-ignore:
@@ -53,7 +53,7 @@ jobs:
       - name: Check out the submodules the game needs
         # Only these two: the SFP-004 FPU library and Xpad. The
         # SidecarTridge firmware's Pico SDK and Pico Extras are large and
-        # play no part in TTDOOM.TOS, so a recursive checkout would only
+        # play no part in either program, so a recursive checkout would only
         # slow every release down.
         run: git submodule update --init src/atarist-sfp004 lib/xpad
 
@@ -63,12 +63,12 @@ jobs:
         run: curl -sL https://github.com/sidecartridge/atarist-toolkit-docker/releases/latest/download/install_atarist_toolkit_docker.sh | bash
 
       - name: Build
-        run: stcmd make ttdoom
+        run: stcmd make ttdoom stdoom
 
       - name: Move the latest tag onto this commit
         # The "latest" release is attached to this tag, so moving it
         # keeps the release's source link pointing at the commit the
-        # attached binary was built from. Through the API rather than
+        # attached binaries were built from. Through the API rather than
         # `git push`: pushing a tag is refused when the commit it points
         # at touches .github/workflows and the token has no workflow
         # scope, which is exactly the commit that adds this file. PATCH
@@ -82,7 +82,7 @@ jobs:
             || gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
                  -f ref=refs/tags/latest -f sha="$GITHUB_SHA" --silent
 
-      - name: Replace TTDOOM.TOS on the latest release
+      - name: Replace TTDOOM.TOS and STDOOM.TOS on the latest release
         # The release is written by hand, so this refuses to create one
         # with made-up text if it has gone missing.
         env:
@@ -90,5 +90,5 @@ jobs:
         run: |
           gh release view latest >/dev/null 2>&1 \
             || { echo "No 'latest' release to upload to: create it by hand first."; exit 1; }
-          gh release upload latest dist/TTDOOM.TOS --clobber
-          echo "Published TTDOOM.TOS from $GITHUB_SHA to the latest release."
+          gh release upload latest dist/TTDOOM.TOS dist/STDOOM.TOS --clobber
+          echo "Published TTDOOM.TOS and STDOOM.TOS from $GITHUB_SHA to the latest release."
