@@ -284,8 +284,15 @@ default_t	defaults[] =
     {"joyb_use",&joybuse,3},
     {"joyb_speed",&joybspeed,2},
 
+#ifdef TTDOOM
+    // TT / Falcon: the full-width view with the status bar (1x, no zoom),
+    // in low detail for speed
+    {"screenblocks",&screenblocks, 10},
+    {"detaillevel",&detailLevel, 1},
+#else
     {"screenblocks",&screenblocks, 5},
     {"detaillevel",&detailLevel, 0},
+#endif
 
     {"snd_channels",&numChannels, 3},
 
