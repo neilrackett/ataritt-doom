@@ -51,6 +51,14 @@ extern fixed_t*		spritetopoffset;
 
 extern lighttable_t*	colormaps;
 
+#if defined(USEASM) && defined(__M68020__)
+// Low detail draws each texel to two pixels: the same light tables with
+// each colour in both bytes of a word, for one store (r_draw.c). Entry i
+// is colormaps[i] twice.
+#define WORD_COLORMAPS
+extern unsigned short*	colormaps_w;
+#endif
+
 extern int		viewwidth;
 extern int		scaledviewwidth;
 extern int		viewheight;

@@ -42,6 +42,13 @@ rcsid[] = "$Id: r_draw.c,v 1.4 1997/02/03 16:47:55 b1 Exp $";
 // State.
 #include "doomstat.h"
 
+#ifdef WORD_COLORMAPS
+// The word colormap for a light table: every one the drawers are given
+// points into colormaps
+#define WORD_COLORMAP(cmap) \
+    ((lighttable_t *)(colormaps_w + ((cmap) - colormaps)))
+#endif
+
 
 // ?
 #define MAXWIDTH			SCREENWIDTH
@@ -119,7 +126,8 @@ static short to_8_0Q6(short n)
 //  be used. It has also been used with Wolfenstein 3D.
 // 
 // The column loop for R_DrawColumn and R_DrawColumnLow: low detail view
-// columns are two screen columns wide, so it draws each pixel twice.
+// columns are two screen columns wide, so it draws each pixel twice (on a
+// 68020+ with one word store, from the word colormaps).
 static inline __attribute__((always_inline)) void R_DrawColumnAt (const int low)
 { 
     short		count; 
@@ -159,6 +167,10 @@ static inline __attribute__((always_inline)) void R_DrawColumnAt (const int low)
     // This is as fast as it gets.
     byte *source = dc_source;
     lighttable_t *colormap = dc_colormap;
+#ifdef WORD_COLORMAPS
+    if (low)
+	colormap = WORD_COLORMAP (colormap);
+#endif
 #ifdef USEASM
     // Invert the order of the fixed-point values so that the integral part
     // is in the lowest 7 bits, thereby making bit-shifting unnecessary.
@@ -189,9 +201,13 @@ static inline __attribute__((always_inline)) void R_DrawColumnAt (const int low)
         "move.b %[frac],%[tmp]                  \n\t"
         "move.b (%[source],%[tmp].w),%[tmp]     \n\t"
         ".if %c[low]                            \n\t"
+#ifdef WORD_COLORMAPS
+        "move.w (%[colormap],%[tmp].w*2),(%[dest])\n\t"
+#else
         "move.b (%[colormap],%[tmp].w),%[tmp]   \n\t"
         "move.b %[tmp],(%[dest])                \n\t"
         "move.b %[tmp],1(%[dest])               \n\t"
+#endif
         ".else                                  \n\t"
         "move.b (%[colormap],%[tmp].w),(%[dest])\n\t"
         ".endif                                 \n\t"
@@ -202,9 +218,13 @@ static inline __attribute__((always_inline)) void R_DrawColumnAt (const int low)
         "move.b %[frac],%[tmp]                  \n\t"
         "move.b (%[source],%[tmp].w),%[tmp]     \n\t"
         ".if %c[low]                            \n\t"
+#ifdef WORD_COLORMAPS
+        "move.w (%[colormap],%[tmp].w*2),%c[width](%[dest])\n\t"
+#else
         "move.b (%[colormap],%[tmp].w),%[tmp]   \n\t"
         "move.b %[tmp],%c[width](%[dest])       \n\t"
         "move.b %[tmp],(%c[width]+1)(%[dest])   \n\t"
+#endif
         ".else                                  \n\t"
         "move.b (%[colormap],%[tmp].w),%c[width](%[dest])\n\t"
         ".endif                                 \n\t"
@@ -649,7 +669,8 @@ unsigned short rotl16 (unsigned short value, unsigned int count) {
 // pixel); this keeps the masks in registers, takes x with a rotate instead
 // of a 26-bit shift, needs no zero-extend of the texel (d5 stays clear) and
 // draws two pixels an iteration: 10.5 instructions a pixel. Low detail
-// (R_DrawSpanLow) writes each texel twice.
+// (R_DrawSpanLow) writes each texel to two pixels with one word store, from
+// the word colormaps.
 #define R_DRAWSPAN_PIXEL \
         "move.l  %[frac],%%d1               \n\t" \
         "and.l   %%d6,%%d1                  \n\t" /* x int 31-26, y int 15-10 */ \
@@ -659,9 +680,7 @@ unsigned short rotl16 (unsigned short value, unsigned int count) {
         "or.w    %%d2,%%d1                  \n\t" /* spot */ \
         "move.b  (%[src],%%d1.w),%%d5       \n\t" \
         ".if %c[low]                        \n\t" \
-        "move.b  (%[cmap],%%d5.w),%%d5       \n\t" \
-        "move.b  %%d5,(%[dest])+            \n\t" \
-        "move.b  %%d5,(%[dest])+            \n\t" \
+        "move.w  (%[cmap],%%d5.w*2),(%[dest])+ \n\t" \
         ".else                              \n\t" \
         "move.b  (%[cmap],%%d5.w),(%[dest])+ \n\t" \
         ".endif                             \n\t" \
@@ -690,7 +709,9 @@ static inline __attribute__((always_inline)) void R_DrawSpanAt (byte *dest, cons
         "dbra    %[n],2b                    \n\t"
         "3:                                 \n\t"
         : [dest] "+a"(dest), [frac] "+d"(frac), [n] "+d"(n)
-        : [src] "a"(ds_source), [cmap] "a"(ds_colormap), [step] "d"(step),
+        : [src] "a"(ds_source),
+          [cmap] "a"(low ? WORD_COLORMAP (ds_colormap) : ds_colormap),
+          [step] "d"(step),
           [low] "i"(low)
         : "d1", "d2", "d5", "d6", "d7", "cc", "memory");
 }

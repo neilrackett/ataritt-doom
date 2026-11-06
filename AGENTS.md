@@ -388,6 +388,13 @@ Anything that reads or publishes Xpad: read
   global `dc_x` (breaking the sprite loop) and `R_DrawSpanLow` counted after
   doubling (drew twice the span). Fuzz/translated columns have `Low`
   versions. Width checks outside the renderer use `scaledviewwidth`.
+- **Word colormaps (TTDOOM, `WORD_COLORMAPS`):** on a 68020+ the low-detail
+  column and span loops store each pixel pair with one `move.w` from
+  `colormaps_w` (`R_InitColormaps`: every light table with each colour in
+  both bytes, 17K), found from the byte table's offset in `colormaps`.
+  Bit-identical: every low column and span of a timedemo checked against
+  the high-detail loop. +3-4% in low detail under Hatari. The 68000 keeps
+  its byte stores (it has no scaled index).
 - **Shrunk views (sizes 6-9, TTDOOM):** `c2p_view_8bpp` converts the view
   rect and what `playdirtybox` says changed, not the static border. Anything
   drawn above the status bar outside the view must reach `V_MarkRect`: the

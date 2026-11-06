@@ -160,6 +160,9 @@ fixed_t*	spriteoffset;
 fixed_t*	spritetopoffset;
 
 lighttable_t	*colormaps;
+#ifdef WORD_COLORMAPS
+unsigned short	*colormaps_w;
+#endif
 
 
 //
@@ -641,6 +644,15 @@ void R_InitColormaps (void)
     colormaps = Z_Malloc (length, PU_STATIC, 0); 
     colormaps = (byte *)( ((int)colormaps + 255)&~0xff); 
     W_ReadLump (lump,colormaps); 
+#ifdef WORD_COLORMAPS
+    {
+	int	i, n = W_LumpLength (lump);
+
+	colormaps_w = Z_Malloc (n * 2, PU_STATIC, 0);
+	for (i = 0; i < n; i++)
+	    colormaps_w[i] = colormaps[i] * 0x0101;
+    }
+#endif
 }
 
 
