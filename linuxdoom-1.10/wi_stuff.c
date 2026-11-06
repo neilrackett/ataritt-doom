@@ -1555,9 +1555,10 @@ void WI_loadData(void)
 
     // background
     bg = W_CacheLumpName(name, PU_CACHE);    
-    // 320x200 background, centred (black bands) on a taller screen
-    V_ClearPageBorders(1);
-    V_DrawPatch(0, PAGE_YOFFSET, 1, bg);
+    // 320x200 background, stretched to a taller screen's height
+    v_page = 1;
+    V_DrawPatch(0, 0, 1, bg);
+    v_page = 0;
 
 
     // UNUSED unsigned char *pic = screens[1];
@@ -1773,11 +1774,11 @@ void WI_unloadData(void)
 
 void WI_Drawer (void)
 {
-    // Laid out for a 320x200 screen: centred on a taller one, over the
-    // background WI_loadData drew centred into screens[1].
-    int oldyoffset = v_yoffset;
+    // Laid out for a 320x200 screen: stretched to a taller one's height,
+    // over the background WI_loadData drew stretched into screens[1].
+    int oldpage = v_page;
 
-    v_yoffset = PAGE_YOFFSET;
+    v_page = 1;
     switch (state)
     {
       case StatCount:
@@ -1797,7 +1798,7 @@ void WI_Drawer (void)
 	WI_drawNoState();
 	break;
     }
-    v_yoffset = oldyoffset;
+    v_page = oldpage;
 }
 
 

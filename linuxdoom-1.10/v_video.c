@@ -44,10 +44,59 @@ rcsid[] = "$Id: v_video.c,v 1.5 1997/02/03 22:45:13 b1 Exp $";
 byte*				screens[5];	
  
 int				dirtybox[4]; 
+#ifdef TTDOOM
+// Everything marked above the status bar since I_FinishUpdate last took it.
+// D_Display puts dirtybox back to the status bar's marks before the update,
+// dropping the border, HUD and pause marks; this keeps them.
+int				playdirtybox[4] = { MININT, MAXINT, MAXINT, MININT };
+#endif
 
 // Added to y by V_DrawPatch/V_DrawPatchFlipped/V_DrawPatchDirect while a
 // 320x200 page is drawn centred on a taller screen (see v_video.h).
-int				v_yoffset;
+int				v_page;
+
+#if SCREENHEIGHT > ORIGHEIGHT
+// Page row shown on each screen row, and the first screen row of page row r
+static short			page_row[SCREENHEIGHT];
+#define PAGE_ROW(r)		(((r)*SCREENHEIGHT + ORIGHEIGHT-1) / ORIGHEIGHT)
+
+void V_DrawPageColumn (int x, int y, int scrn, column_t *column)
+{
+    byte*	desttop = screens[scrn] + x;
+
+    while (column->topdelta != 0xff)
+    {
+	byte*	source = (byte *)column + 3;
+	int	r0 = y + column->topdelta;
+	int	d = PAGE_ROW(r0);
+	int	d1 = PAGE_ROW(r0 + column->length);
+	byte*	dest;
+
+	if (d < 0)
+	    d = 0;
+	if (d1 > SCREENHEIGHT)
+	    d1 = SCREENHEIGHT;
+	dest = desttop + d*SCREENWIDTH;
+	for ( ; d < d1 ; d++, dest += SCREENWIDTH)
+	    *dest = source[page_row[d] - r0];
+	column = (column_t *)((byte *)column + column->length + 4);
+    }
+}
+
+// A patch in page coordinates, stretched to the screen's height
+static void V_DrawPagePatch (int x, int y, int scrn, patch_t *patch, boolean flipped)
+{
+    int		w = SHORT(patch->width);
+    int		col;
+
+    if (!scrn)
+	V_MarkRect (x, PAGE_ROW(y), w,
+		    PAGE_ROW(y + SHORT(patch->height)) - PAGE_ROW(y));
+    for (col = 0 ; col < w ; col++, x++)
+	V_DrawPageColumn (x, y, scrn, (column_t *)((byte *)patch +
+			  LONG(patch->columnofs[flipped ? w-1-col : col])));
+}
+#endif
 
 
 
@@ -152,35 +201,23 @@ V_MarkRect
 { 
     M_AddToBox (dirtybox, x, y); 
     M_AddToBox (dirtybox, x+width-1, y+height-1); 
+#ifdef TTDOOM
+    if (y < SCREENHEIGHT-32)
+    {
+	int bottom = y+height-1;
+
+	if (bottom > SCREENHEIGHT-33)
+	    bottom = SCREENHEIGHT-33;
+	M_AddToBox (playdirtybox, x, y); 
+	M_AddToBox (playdirtybox, x+width-1, bottom); 
+    }
+#endif
 } 
 
 void
 V_ClearRect()
 {
     M_ClearBox (dirtybox);
-}
-
-//
-// V_ClearPageBorders
-// Black bands above and below a 320x200 page drawn centred on a taller
-// screen. Nothing to do at SCREENHEIGHT 200.
-//
-void V_ClearPageBorders (int scrn)
-{
-#if SCREENHEIGHT > ORIGHEIGHT
-    int bottom = PAGE_YOFFSET + ORIGHEIGHT;
-
-    memset (screens[scrn], 0, SCREENWIDTH*PAGE_YOFFSET);
-    memset (screens[scrn] + bottom*SCREENWIDTH, 0,
-	    SCREENWIDTH*(SCREENHEIGHT-bottom));
-    if (!scrn)
-    {
-	V_MarkRect (0, 0, SCREENWIDTH, PAGE_YOFFSET);
-	V_MarkRect (0, bottom, SCREENWIDTH, SCREENHEIGHT-bottom);
-    }
-#else
-    (void)scrn;
-#endif
 }
 
 //
@@ -248,9 +285,15 @@ V_DrawPatch
     byte*	source; 
     int		w; 
 	 
-    y += v_yoffset;
     y -= SHORT(patch->topoffset); 
     x -= SHORT(patch->leftoffset); 
+#if SCREENHEIGHT > ORIGHEIGHT
+    if (v_page)
+    {
+	V_DrawPagePatch (x, y, scrn, patch, false);
+	return;
+    }
+#endif
 #ifdef RANGECHECK 
     if (x<0
 	||x+SHORT(patch->width) >SCREENWIDTH
@@ -316,9 +359,15 @@ V_DrawPatchFlipped
     byte*	source; 
     int		w; 
 	 
-    y += v_yoffset;
     y -= SHORT(patch->topoffset); 
     x -= SHORT(patch->leftoffset); 
+#if SCREENHEIGHT > ORIGHEIGHT
+    if (v_page)
+    {
+	V_DrawPagePatch (x, y, scrn, patch, true);
+	return;
+    }
+#endif
 #ifdef RANGECHECK 
     if (x<0
 	||x+SHORT(patch->width) >SCREENWIDTH
@@ -524,4 +573,8 @@ void V_Init (void)
 
     for (i=0 ; i<4 ; i++)
 	screens[i] = base + i*SCREENWIDTH*SCREENHEIGHT;
+#if SCREENHEIGHT > ORIGHEIGHT
+    for (i=0 ; i<SCREENHEIGHT ; i++)
+	page_row[i] = i*ORIGHEIGHT/SCREENHEIGHT;
+#endif
 }

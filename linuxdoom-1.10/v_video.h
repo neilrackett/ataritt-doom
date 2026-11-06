@@ -39,17 +39,20 @@
 #define CENTERY			(SCREENHEIGHT/2)
 
 // 2D artwork (title pages, menus, intermission, finale) is authored for a
-// 320x200 screen. On a taller screen it is drawn centred vertically: the
-// drawers for those screens set v_yoffset to PAGE_YOFFSET, which V_DrawPatch
-// adds to every y, and full-screen pages clear the bands above and below with
-// V_ClearPageBorders. Both are no-ops at SCREENHEIGHT 200.
+// 320x200 screen, which DOS showed on a 4:3 monitor (as the ST does). On the
+// taller TTDOOM screen (square pixels) it is stretched to the full height:
+// the drawers for those screens set v_page, and V_DrawPatch then takes y in
+// 200-line page coordinates and draws screen row d from page row
+// d*ORIGHEIGHT/SCREENHEIGHT. No effect at SCREENHEIGHT 200.
 #define ORIGHEIGHT		200
-#define PAGE_YOFFSET		((SCREENHEIGHT-ORIGHEIGHT)/2)
 
-extern int	v_yoffset;
+extern int	v_page;
 
-// Fill the bands above and below a centred 320x200 page with black.
-void V_ClearPageBorders (int scrn);
+#if SCREENHEIGHT > ORIGHEIGHT
+// One column of a patch at screen column x, its top at page row y (page
+// coordinates, stretched), into screens[scrn].
+void V_DrawPageColumn (int x, int y, int scrn, column_t *column);
+#endif
 
 
 // Screen 0 is the screen updated by I_Update screen.
@@ -60,6 +63,10 @@ void V_ClearPageBorders (int scrn);
 extern	byte*		screens[5];
 
 extern  int	dirtybox[4];
+#ifdef TTDOOM
+// What was marked above the status bar since I_FinishUpdate last took it
+extern  int	playdirtybox[4];
+#endif
 
 extern	byte	gammatable[5][256];
 extern	int	usegamma;

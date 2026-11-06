@@ -8,6 +8,8 @@
 #include "w_wad.h"
 #include "z_zone.h"
 #include "doomdef.h"
+#include "m_bbox.h"
+#include "hu_stuff.h"
 
 /* Some environments don't define u_int32_t, but do define uint32_t. */
 typedef uint32_t u_int32_t;
@@ -8468,14 +8470,14 @@ void c2p_screen_lorez(unsigned char *out, const unsigned char *in)
 {
     boolean zoom_allowed = gamestate == GS_LEVEL && !menuactive && !inhelpscreens && !automapactive;
     short splitline = !zoom_allowed || viewheight == SCREENHEIGHT ? SCREENHEIGHT : SCREENHEIGHT - 32;
-    if (!zoom_allowed || viewwidth > SCREENWIDTH / 2)
+    if (!zoom_allowed || scaledviewwidth > SCREENWIDTH / 2)
     {
         for (short line = 0; line < splitline; line++)
         {
             c2p_1x_lorez(out + 160 * line, in + 320 * line, 320, c2p_table[line & 3]);
         }
     }
-    else if (viewwidth > SCREENWIDTH / 4)
+    else if (scaledviewwidth > SCREENWIDTH / 4)
     {
         // 2x zoom
         for (short line = 0; line < splitline; line++)
@@ -8501,14 +8503,14 @@ static void c2p_screen_midrez(unsigned char *out, const unsigned char *in)
 {
     boolean zoom_allowed = gamestate == GS_LEVEL && !menuactive && !inhelpscreens && !automapactive;
     short splitline = !zoom_allowed || viewheight == SCREENHEIGHT ? SCREENHEIGHT : SCREENHEIGHT - 32;
-    if (!zoom_allowed || viewwidth > SCREENWIDTH / 2)
+    if (!zoom_allowed || scaledviewwidth > SCREENWIDTH / 2)
     {
         for (short line = 0; line < splitline; line++)
         {
             c2p_1x_midrez(out + 160 * line, in + 320 * line, 320, c2p_table[line & 3]);
         }
     }
-    else if (viewwidth > SCREENWIDTH / 4)
+    else if (scaledviewwidth > SCREENWIDTH / 4)
     {
         // 2x zoom
         for (short line = 0; line < splitline; line++)
@@ -8534,14 +8536,14 @@ static void c2p_screen_hirez(unsigned char *out, const unsigned char *in)
 {
     boolean zoom_allowed = gamestate == GS_LEVEL && !menuactive && !inhelpscreens && !automapactive;
     short splitline = !zoom_allowed || viewheight == SCREENHEIGHT ? SCREENHEIGHT : SCREENHEIGHT - 32;
-    if (!zoom_allowed || viewwidth > SCREENWIDTH / 2)
+    if (!zoom_allowed || scaledviewwidth > SCREENWIDTH / 2)
     {
         for (short line = 0; line < splitline; line++)
         {
             c2p_1x_hirez(out + 160 * line, in + 320 * line, 320, c2p_table[line & 1]);
         }
     }
-    else if (viewwidth > SCREENWIDTH / 4)
+    else if (scaledviewwidth > SCREENWIDTH / 4)
     {
         // 2x zoom
         for (short line = 0; line < splitline; line++)
@@ -8563,18 +8565,108 @@ static void c2p_screen_hirez(unsigned char *out, const unsigned char *in)
     }
 }
 
+// TTDOOM, double buffered: what changed in screens[0] since the page being
+// drawn last took it (the dirty boxes of this frame and the one before), set
+// by I_FinishUpdate before each frame's C2P.
+static int c2p8_dirty[4];
+static boolean c2p8_have_dirty;
+
+void c2p_8bpp_set_dirty(const int *box)
+{
+    memcpy(c2p8_dirty, box, sizeof(c2p8_dirty));
+    c2p8_have_dirty = true;
+}
+
+// Rows of the top of the screen that HUD messages use
+#define C2P8_MSG_ROWS 16
+
+// A shrunk view (sizes 6-9): converts the view and whatever else changed in
+// the play area - the border when Doom redraws it, HUD messages, the pause
+// sign, screen wipes, all of which mark the dirty box - and the message rows
+// for a few frames after a message goes (its erase is not marked). The rest
+// of the border is already on the page.
+static void c2p_view_8bpp(unsigned char *out, const unsigned char *in, short splitline)
+{
+    static short msg_frames;
+    short vx0 = viewwindowx, vx1 = viewwindowx + scaledviewwidth;
+    short vy0 = viewwindowy, vy1 = viewwindowy + viewheight;
+    int dx0 = c2p8_dirty[BOXLEFT], dx1 = c2p8_dirty[BOXRIGHT] + 1;
+    int dy0 = c2p8_dirty[BOXBOTTOM], dy1 = c2p8_dirty[BOXTOP] + 1;
+    short msg_rows = 0;
+
+    if (HU_MessageActive())
+        msg_frames = 4;     // both pages, and HUlib's erase frames
+    if (msg_frames > 0)
+    {
+        msg_frames--;
+        msg_rows = C2P8_MSG_ROWS;
+    }
+    // Whole 16-pixel groups, inside the play area
+    if (dx0 < 0)
+        dx0 = 0;
+    if (dx1 > SCREENWIDTH)
+        dx1 = SCREENWIDTH;
+    dx0 &= ~15;
+    dx1 = (dx1 + 15) & ~15;
+    if (dy0 < 0)
+        dy0 = 0;
+    if (dy1 > splitline)
+        dy1 = splitline;
+    if (dx1 <= dx0)
+        dy1 = 0;
+
+    for (short line = 0; line < splitline; line++)
+    {
+        short x0 = SCREENWIDTH, x1 = 0;
+
+        if (line < msg_rows)
+        {
+            x0 = 0;
+            x1 = SCREENWIDTH;
+        }
+        else
+        {
+            if (line >= vy0 && line < vy1)
+            {
+                x0 = vx0;
+                x1 = vx1;
+            }
+            if (line >= dy0 && line < dy1)
+            {
+                if (dx0 < x0)
+                    x0 = dx0;
+                if (dx1 > x1)
+                    x1 = dx1;
+            }
+        }
+        if (x0 < x1)
+            c2p8_line(out + c2p8_stride * line + x0, in + SCREENWIDTH * line + x0, x1 - x0);
+    }
+}
+
 static void c2p_screen_8bpp(unsigned char *out, const unsigned char *in)
 {
     boolean zoom_allowed = gamestate == GS_LEVEL && !menuactive && !inhelpscreens && !automapactive;
     short splitline = !zoom_allowed || viewheight == SCREENHEIGHT ? SCREENHEIGHT : SCREENHEIGHT - 32;
-    if (!zoom_allowed || viewwidth > SCREENWIDTH / 2)
+    boolean have_dirty = c2p8_have_dirty;
+
+    // Only for a frame whose dirty box was given (TTDOOM). STDOOM.TOS's TT
+    // Low path converts every line, as before.
+    c2p8_have_dirty = false;
+    if (zoom_allowed && have_dirty && viewheight > 0 &&
+        scaledviewwidth > SCREENWIDTH / 2 && scaledviewwidth < SCREENWIDTH)
+    {
+        c2p_view_8bpp(out, in, splitline);
+        return;
+    }
+    if (!zoom_allowed || scaledviewwidth > SCREENWIDTH / 2)
     {
         for (short line = 0; line < splitline; line++)
         {
             c2p8_line(out + c2p8_stride * line, in + SCREENWIDTH * line, SCREENWIDTH);
         }
     }
-    else if (viewwidth > SCREENWIDTH / 4)
+    else if (scaledviewwidth > SCREENWIDTH / 4)
     {
         // 2x zoom: the 160-pixel-wide centre of the play area, each pixel
         // widened to two and each line shown twice

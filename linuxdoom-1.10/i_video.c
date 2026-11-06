@@ -302,6 +302,17 @@ void I_UpdateNoBlit (void)
     // what is this?
 }
 
+#ifdef TTDOOM
+// The union of two dirty boxes, by hand: M_AddToBox misreads an empty box
+static void dirty_union(int *out, const int *a, const int *b)
+{
+    out[BOXTOP] = a[BOXTOP] > b[BOXTOP] ? a[BOXTOP] : b[BOXTOP];
+    out[BOXBOTTOM] = a[BOXBOTTOM] < b[BOXBOTTOM] ? a[BOXBOTTOM] : b[BOXBOTTOM];
+    out[BOXLEFT] = a[BOXLEFT] < b[BOXLEFT] ? a[BOXLEFT] : b[BOXLEFT];
+    out[BOXRIGHT] = a[BOXRIGHT] > b[BOXRIGHT] ? a[BOXRIGHT] : b[BOXRIGHT];
+}
+#endif
+
 //
 // I_FinishUpdate
 //
@@ -332,21 +343,24 @@ void I_FinishUpdate (void)
 #ifdef TTDOOM
     {
         /* Double buffered: draw into the page not on screen, then show it.
-         * That page last took the status bar two frames ago, so it needs the
-         * cells changed in the frame before this one as well as this one. */
-        static int last_box[4] = { MININT, MAXINT, MAXINT, MININT };
-        int box[4];
+         * That page last took a frame two frames ago, so it needs what changed
+         * in the frame before this one as well as this one: the status bar
+         * cells (dirtybox), and above the status bar the border round a shrunk
+         * view, HUD messages and so on (playdirtybox). */
+        static int last_bar[4] = { MININT, MAXINT, MAXINT, MININT };
+        static int last_play[4] = { MININT, MAXINT, MAXINT, MININT };
+        int bar[4], play[4];
 
-        /* Union by hand: M_AddToBox misreads an empty box */
-        box[BOXTOP] = dirtybox[BOXTOP] > last_box[BOXTOP] ? dirtybox[BOXTOP] : last_box[BOXTOP];
-        box[BOXBOTTOM] = dirtybox[BOXBOTTOM] < last_box[BOXBOTTOM] ? dirtybox[BOXBOTTOM] : last_box[BOXBOTTOM];
-        box[BOXLEFT] = dirtybox[BOXLEFT] < last_box[BOXLEFT] ? dirtybox[BOXLEFT] : last_box[BOXLEFT];
-        box[BOXRIGHT] = dirtybox[BOXRIGHT] > last_box[BOXRIGHT] ? dirtybox[BOXRIGHT] : last_box[BOXRIGHT];
-        memcpy(last_box, dirtybox, sizeof(last_box));
+        dirty_union(bar, dirtybox, last_bar);
+        dirty_union(play, playdirtybox, last_play);
+        memcpy(last_bar, dirtybox, sizeof(last_bar));
+        memcpy(last_play, playdirtybox, sizeof(last_play));
+        M_ClearBox(playdirtybox);
 
         st_screen = atari_vmode_draw_page();
+        c2p_8bpp_set_dirty(play);
         c2p_screen(st_screen, screens[0]);
-        c2p_statusbar(st_screen, screens[0], box[BOXBOTTOM], box[BOXTOP] + 1, box[BOXLEFT], box[BOXRIGHT] + 1);
+        c2p_statusbar(st_screen, screens[0], bar[BOXBOTTOM], bar[BOXTOP] + 1, bar[BOXLEFT], bar[BOXRIGHT] + 1);
         atari_vmode_show_page();
     }
 #else

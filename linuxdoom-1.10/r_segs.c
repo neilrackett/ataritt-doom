@@ -166,7 +166,8 @@ R_RenderMaskedSegRange
 	{
 	    if (!fixedcolormap)
 	    {
-		index = spryscale>>LIGHTSCALESHIFT;
+		// Light by the unstretched scale, as at 200 lines
+		index = YASPECT_INV(spryscale>>LIGHTSCALESHIFT);
 
 		if (index >=  MAXLIGHTSCALE )
 		    index = MAXLIGHTSCALE-1;
@@ -280,7 +281,8 @@ void R_RenderSegLoop (void)
 	    texturecolumn = rw_offset-FixedMul(finetangent[angle],rw_distance);
 	    texturecolumn >>= FRACBITS;
 	    // calculate lighting
-	    index = rw_scale>>LIGHTSCALESHIFT;
+	    // Light by the unstretched scale, as at 200 lines
+	    index = YASPECT_INV(rw_scale>>LIGHTSCALESHIFT);
 
 	    if (index >=  MAXLIGHTSCALE )
 		index = MAXLIGHTSCALE-1;

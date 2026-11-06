@@ -109,12 +109,25 @@ typedef enum
 // So there.
 #define SCREENWIDTH  320
 //SCREEN_MUL*BASE_WIDTH //320
-// The ST build is 320x200. TTDOOM (TT / Falcon) is built with
-// -DSCREENHEIGHT=240: the 3D view and status bar use the full height, and
-// 320x200 artwork (title pages, menus, intermission, finale) is centred
-// vertically (see PAGE_YOFFSET in v_video.h).
+// The ST build is 320x200, shown (as DOS showed it) on a 4:3 screen, so its
+// pixels are 1.2 times taller than wide, and Doom's art and proportions
+// assume that. TTDOOM (TT / Falcon) is built with -DSCREENHEIGHT=240, square
+// pixels: the 3D view and status bar use the full height, the 3D view's
+// vertical scale is YASPECT() of its horizontal one so walls and sprites keep
+// their DOS proportions, and 320x200 artwork (title pages, menus,
+// intermission, finale) is stretched to the full height (v_page in
+// v_video.h).
 #ifndef SCREENHEIGHT
 #define SCREENHEIGHT 200
+#endif
+#if SCREENHEIGHT == 240
+#define YASPECT(x)	((x) * 6 / 5)
+#define YASPECT_INV(x)	((x) * 5 / 6)
+#elif SCREENHEIGHT == 200
+#define YASPECT(x)	(x)
+#define YASPECT_INV(x)	(x)
+#else
+#error "YASPECT is worked out for 200 and 240 lines only"
 #endif
 //(int)(SCREEN_MUL*BASE_WIDTH*INV_ASPECT_RATIO) //200
 

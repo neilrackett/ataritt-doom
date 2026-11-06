@@ -47,7 +47,8 @@ rcsid[] = "$Id: r_things.c,v 1.5 1997/02/03 16:47:56 b1 Exp $";
 // 100 on a 200-line screen. On a taller one the weapon sprites (authored
 // against a 200-line screen bottom) would float above the bottom of the
 // view, so the centre moves up by the extra half-height.
-#define BASEYCENTER			(100 - (SCREENHEIGHT-200)/2)
+// In 200-line units: YASPECT scales the weapon's height with the view's
+#define BASEYCENTER			100
 
 //void R_DrawColumn (void);
 //void R_DrawFuzzColumn (void);
@@ -424,7 +425,8 @@ R_DrawVisSprite
 	    ( (vis->mobjflags & MF_TRANSLATION) >> (MF_TRANSSHIFT-8) );
     }
 	
-    dc_iscale = abs(vis->xiscale)>>detailshift;
+    // Vertical texture step: the horizontal one over the vertical scale
+    dc_iscale = YASPECT_INV(abs(vis->xiscale))>>detailshift;
     dc_texturemid = vis->texturemid;
     frac = vis->startfrac;
     spryscale = vis->scale;
@@ -552,7 +554,7 @@ void R_ProjectSprite (mobj_t* thing)
     // store information in a vissprite
     vis = R_NewVisSprite ();
     vis->mobjflags = thing->flags;
-    vis->scale = xscale<<detailshift;
+    vis->scale = YASPECT(xscale)<<detailshift;
     vis->gx = thing->x;
     vis->gy = thing->y;
     vis->gz = thing->z;
@@ -698,7 +700,7 @@ void R_DrawPSprite (pspdef_t* psp)
     vis->texturemid = (BASEYCENTER<<FRACBITS)+FRACUNIT/2-(psp->sy-spritetopoffset[lump]);
     vis->x1 = x1 < 0 ? 0 : x1;
     vis->x2 = x2 >= viewwidth ? viewwidth-1 : x2;	
-    vis->scale = pspritescale<<detailshift;
+    vis->scale = YASPECT(pspritescale)<<detailshift;
     
     if (flip)
     {

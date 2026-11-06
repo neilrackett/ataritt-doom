@@ -619,7 +619,14 @@ F_DrawPatchCol
     int		count;
 	
     column = (column_t *)((byte *)patch + LONG(patch->columnofs[col]));
-    desttop = screens[0]+v_yoffset*SCREENWIDTH+x;
+#if SCREENHEIGHT > ORIGHEIGHT
+    if (v_page)
+    {
+	V_DrawPageColumn (x, 0, 0, column);
+	return;
+    }
+#endif
+    desttop = screens[0]+x;
 
     // step through the posts in a column
     while (column->topdelta != 0xff )
@@ -701,19 +708,16 @@ static void F_DrawStage (void);
 
 //
 // F_Drawer
-// The finale screens are laid out for a 320x200 screen: draw them centred
-// vertically on a taller one. The text screen tiles its flat over the
-// whole screen; the picture screens get black bands.
+// The finale screens are laid out for a 320x200 screen: stretched to a
+// taller one's height. (The text screen's flat tiles the whole screen.)
 //
 void F_Drawer (void)
 {
-    int oldyoffset = v_yoffset;
+    int oldpage = v_page;
 
-    v_yoffset = PAGE_YOFFSET;
-    if (finalestage)
-	V_ClearPageBorders (0);
+    v_page = 1;
     F_DrawStage ();
-    v_yoffset = oldyoffset;
+    v_page = oldpage;
 }
 
 static void F_DrawStage (void)

@@ -752,7 +752,6 @@ void M_QuickLoad(void)
 void M_DrawReadThis1(void)
 {
     inhelpscreens = true;
-    V_ClearPageBorders (0);
     switch ( gamemode )
     {
       case commercial:
@@ -777,7 +776,6 @@ void M_DrawReadThis1(void)
 void M_DrawReadThis2(void)
 {
     inhelpscreens = true;
-    V_ClearPageBorders (0);
     switch ( gamemode )
     {
       case retail:
@@ -1135,17 +1133,13 @@ void M_ChangeDetail(int choice)
     choice = 0;
     detailLevel = 1 - detailLevel;
 
-    // FIXME - does not work. Remove anyway?
-    fprintf( stderr, "M_ChangeDetail: low detail mode n.a.\n");
-
-    return;
-    
-    /*R_SetViewSize (screenblocks, detailLevel);
+    // Low detail: the renderer draws half-width and doubles each pixel
+    R_SetViewSize (screenblocks, detailLevel);
 
     if (!detailLevel)
 	players[consoleplayer].message = DETAILHI;
     else
-	players[consoleplayer].message = DETAILLO;*/
+	players[consoleplayer].message = DETAILLO;
 }
 
 
@@ -1743,16 +1737,16 @@ static void M_DrawMenuLayer (void);
 
 //
 // M_Drawer
-// Menus, help pages and messages are laid out for a 320x200 screen: draw
-// them centred vertically on a taller one.
+// Menus, help pages and messages are laid out for a 320x200 screen:
+// stretched to a taller one's height, as the pages behind them are.
 //
 void M_Drawer (void)
 {
-    int oldyoffset = v_yoffset;
+    int oldpage = v_page;
 
-    v_yoffset = PAGE_YOFFSET;
+    v_page = 1;
     M_DrawMenuLayer ();
-    v_yoffset = oldyoffset;
+    v_page = oldpage;
 }
 
 static void M_DrawMenuLayer (void)

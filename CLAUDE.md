@@ -210,11 +210,15 @@ make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION
   `Setscreen(..,7)` (C2P writes each line to two scanlines); Falcon
   `VsetScreen(..,3,BPS8|COL40|VGA|VERTFLAG)` on VGA, or `BPS8|COL40|PAL|OVERSCAN`
   (384 wide, picture 32 in) on RGB/TV. Restores the desktop mode + palette.
-- **240 lines:** `SCREENHEIGHT` is compile-time. 320x200 art (pages, menus, WI,
-  finale) is centred via `v_yoffset`/`PAGE_YOFFSET` + `V_ClearPageBorders`
-  (`v_video.h`); status-bar Y positions use `ST_YOFS()`; `BASEYCENTER` and
-  `skytexturemid` follow `SCREENHEIGHT`. At 200 these all reduce to the
-  original constants (ST code verified identical by disassembly).
+- **240 lines, DOS proportions:** `SCREENHEIGHT` is compile-time. 320x200
+  was shown on 4:3 (DOS, ST), so TTDOOM's square-pixel 240 lines stand for
+  those 200: 320x200 art (pages, menus, WI, finale) is drawn with `v_page` set
+  and stretched (screen row d = page row d*200/240, `v_video.c`), and the 3D
+  view's vertical scale is `YASPECT()` (x6/5, `doomdef.h`) of the horizontal -
+  walls, plane row distances, sprites, weapon, sky - with lighting on the
+  unstretched scale. `BASEYCENTER`/`skytexturemid` are id's 100 again.
+  Status-bar Y positions use `ST_YOFS()`. At 200 all of this reduces to the
+  original code (ST renderer verified identical by disassembly).
 - **Double buffering:** `atari_vmode.c` allocates two ST-RAM pages;
   `I_FinishUpdate` draws into `atari_vmode_draw_page()` and flips with
   `atari_vmode_show_page()` (writes `$FF8201/03`, latched at the next frame).
@@ -226,6 +230,19 @@ make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION
   stride (320/384) and copy count (lines doubled on TT, zoom repeats), so a
   zoomed line is converted once. ~2.5x (TT) / ~4x (Falcon) faster than the
   old `movep` version under Hatari; bit-identical output.
+- **Span loop:** `R_DrawSpan`/`R_DrawSpanLow` have a hand-written loop for
+  68020+ (`__M68020__`, the ISA macro; `-mtune=68030` defines `__mc68030__`,
+  not `__mc68020__`): 10.5 instructions a pixel vs gcc's 14, bit-identical
+  (checked span by span against the C loop over a timedemo). The 68000 build
+  keeps the C loop; its `R_DrawColumn`/`R_DrawSpan` machine code is unchanged.
+- **Low detail (F5):** works in both binaries. `R_DrawColumnLow` shares
+  `R_DrawColumn`'s asm (each pixel written twice); id's versions doubled the
+  global `dc_x` (breaking the sprite loop) and `R_DrawSpanLow` counted after
+  doubling (drew twice the span). Fuzz/translated columns have `Low`
+  versions. Width checks outside the renderer use `scaledviewwidth`.
+- **Shrunk views (sizes 6-9, TTDOOM):** `c2p_view_8bpp` converts the view
+  rect, what `playdirtybox` says changed, and the HUD message rows for a few
+  frames after a message (its erase isn't marked), not the static border.
 
 ### Hard-won fixes (do not regress)
 
@@ -236,6 +253,10 @@ make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION
   flip waits on.
 - **Don't union dirty boxes with `M_AddToBox`**: its `else if` misreads an
   empty (cleared) box. `I_FinishUpdate` takes min/max by hand.
+- **`D_Display` rewinds `dirtybox`** to its value before the 3D view, HUD,
+  border and menu are drawn, so at `I_FinishUpdate` it covers the status bar
+  only. Under `TTDOOM`, `V_MarkRect` also feeds `playdirtybox` (everything
+  above the status bar), which `I_FinishUpdate` takes and clears each frame.
 - **TT GPIP bit 7 (mono detect) is XORed with the DMA-sound play line**, so it
   reads inverted once sound is playing. Read it at startup
   (`atari_vmode_supported()` in `main`, before `I_InitSound`).
@@ -248,5 +269,9 @@ TOS images live in `tmp/tos/` (gitignored; `tos306uk.img` for TT; use EmuTOS
 512k for Falcon). Run headless with `SDL_VIDEODRIVER=dummy`, pass
 `--addr24 off` (after `--machine`) whenever TT-RAM is enabled and
 `--alert-level fatal`, so no dialogs pop up. `--tos-res ttlow` boots a TT in
-TT Low for testing `STDOOM.TOS`'s 8-plane path.
+TT Low for testing `STDOOM.TOS`'s 8-plane path. Over the command FIFO,
+`hatari-event keypress 1` is the "1" key: give single-digit scancodes in hex
+(`0x01` is Esc). Frame checksums differ by a few sprite-edge pixels between
+any two builds (layout-dependent reads), so compare renderer changes within
+one binary, not across builds.
 

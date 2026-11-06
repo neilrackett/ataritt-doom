@@ -450,9 +450,10 @@ void D_PageTicker (void)
 //
 void D_PageDrawer (void)
 {
-    // 320x200 page, centred (black bands) on a taller screen
-    V_ClearPageBorders (0);
-    V_DrawPatch (0,PAGE_YOFFSET, 0, W_CacheLumpName(pagename, PU_CACHE));
+    // 320x200 page, stretched to a taller screen's height
+    v_page = 1;
+    V_DrawPatch (0,0, 0, W_CacheLumpName(pagename, PU_CACHE));
+    v_page = 0;
 }
 
 

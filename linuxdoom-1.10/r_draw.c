@@ -118,7 +118,9 @@ static short to_8_0Q6(short n)
 // Thus a special case loop for very fast rendering can
 //  be used. It has also been used with Wolfenstein 3D.
 // 
-void R_DrawColumn (void) 
+// The column loop for R_DrawColumn and R_DrawColumnLow: low detail view
+// columns are two screen columns wide, so it draws each pixel twice.
+static inline __attribute__((always_inline)) void R_DrawColumnAt (const int low)
 { 
     short		count; 
     byte*		dest; 
@@ -131,17 +133,20 @@ void R_DrawColumn (void)
     if (count < 0) 
 	return; 
 				 
+    // After the zero-length test, which leaves the 68000 code as before
+    short x = low ? dc_x << 1 : dc_x;
+
 #ifdef RANGECHECK 
-    if ((unsigned)dc_x >= SCREENWIDTH
+    if ((unsigned)x >= SCREENWIDTH
 	|| dc_yl < 0
 	|| dc_yh >= SCREENHEIGHT) 
-	I_Error ("R_DrawColumn: %i to %i at %i", dc_yl, dc_yh, dc_x); 
+	I_Error ("R_DrawColumn: %i to %i at %i", dc_yl, dc_yh, x); 
 #endif 
 
     // Framebuffer destination address.
     // Use ylookup LUT to avoid multiply with ScreenWidth.
     // Use columnofs LUT for subwindows? 
-    dest = ylookup[dc_yl] + columnofs[dc_x];  
+    dest = ylookup[dc_yl] + columnofs[x];  
 
     // Determine scaling,
     //  which is the only mapping to be done.
@@ -183,14 +188,26 @@ void R_DrawColumn (void)
 
         "move.b %[frac],%[tmp]                  \n\t"
         "move.b (%[source],%[tmp].w),%[tmp]     \n\t"
+        ".if %c[low]                            \n\t"
+        "move.b (%[colormap],%[tmp].w),%[tmp]   \n\t"
+        "move.b %[tmp],(%[dest])                \n\t"
+        "move.b %[tmp],1(%[dest])               \n\t"
+        ".else                                  \n\t"
         "move.b (%[colormap],%[tmp].w),(%[dest])\n\t"
+        ".endif                                 \n\t"
         "addx.w %[step],%[frac]                 \n\t"
         "and.w  %[mask],%[frac]                 \n\t"
 
         "1:                                     \n\t"
         "move.b %[frac],%[tmp]                  \n\t"
         "move.b (%[source],%[tmp].w),%[tmp]     \n\t"
+        ".if %c[low]                            \n\t"
+        "move.b (%[colormap],%[tmp].w),%[tmp]   \n\t"
+        "move.b %[tmp],%c[width](%[dest])       \n\t"
+        "move.b %[tmp],(%c[width]+1)(%[dest])   \n\t"
+        ".else                                  \n\t"
         "move.b (%[colormap],%[tmp].w),%c[width](%[dest])\n\t"
+        ".endif                                 \n\t"
         "addx.w %[step],%[frac]                 \n\t"
         "and.w  %[mask],%[frac]                 \n\t"
 
@@ -209,6 +226,7 @@ void R_DrawColumn (void)
         , [zero] "d" (0)
         , [mask] "d" (0xff7f)
         , [width] "i" (SCREENWIDTH)
+        , [low] "i" (low)
         // clobbers
         : "memory", "cc"
     );	
@@ -218,12 +236,25 @@ void R_DrawColumn (void)
 	// Re-map color indices from wall texture column
 	//  using a lighting/special effects LUT.
 	*dest = colormap[source[frac>>8]];
+	if (low)
+	    dest[1] = *dest;
 	
 	dest += SCREENWIDTH; 
 	frac += fracstep;
 	
     } while (count--); 
 #endif
+}
+
+void R_DrawColumn (void) 
+{ 
+    R_DrawColumnAt (0);
+} 
+
+// Low detail: view columns are two screen columns wide
+void R_DrawColumnLow (void) 
+{ 
+    R_DrawColumnAt (1);
 } 
 
 
@@ -287,49 +318,7 @@ void R_DrawColumn (void)
 #endif
 
 
-void R_DrawColumnLow (void) 
-{ 
-    short		count; 
-    byte*		dest; 
-    byte*		dest2;
-    fixed_t		frac;
-    fixed_t		fracstep;	 
- 
-    count = dc_yh - dc_yl; 
 
-    // Zero length.
-    if (count < 0) 
-	return; 
-				 
-#ifdef RANGECHECK 
-    if ((unsigned)dc_x >= SCREENWIDTH
-	|| dc_yl < 0
-	|| dc_yh >= SCREENHEIGHT)
-    {
-	
-	I_Error ("R_DrawColumn: %i to %i at %i", dc_yl, dc_yh, dc_x);
-    }
-    //	dccount++; 
-#endif 
-    // Blocky mode, need to multiply by 2.
-    dc_x <<= 1;
-    
-    dest = ylookup[dc_yl] + columnofs[dc_x];
-    dest2 = ylookup[dc_yl] + columnofs[dc_x+1];
-    
-    fracstep = dc_iscale; 
-    frac = dc_texturemid + (dc_yl-centery)*fracstep;
-    
-    do 
-    {
-	// Hack. Does not work corretly.
-	*dest2 = *dest = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
-	dest += SCREENWIDTH;
-	dest2 += SCREENWIDTH;
-	frac += fracstep; 
-
-    } while (count--);
-}
 
 
 //
@@ -433,6 +422,36 @@ void R_DrawFuzzColumn (void)
 
     fuzzpos = fuzzpos_tmp; // Copy register back into global
 } 
+
+// Low detail: R_DrawFuzzColumn two pixels wide, each pixel taking the fuzz
+// from its own screen column.
+void R_DrawFuzzColumnLow (void) 
+{ 
+    short	count; 
+    byte*	dest; 
+    byte*	colormap = colormaps + 6*256;
+
+    // Adjust borders, as R_DrawFuzzColumn
+    if (!dc_yl) 
+	dc_yl = 1;
+    if (dc_yh == viewheight-1) 
+	dc_yh = viewheight - 2; 
+    count = dc_yh - dc_yl; 
+    if (count < 0) 
+	return; 
+
+    dest = ylookup[dc_yl] + columnofs[dc_x << 1];
+    do 
+    {
+	short ofs = fuzzoffset[fuzzpos];
+
+	dest[0] = colormap[dest[ofs]];
+	dest[1] = colormap[dest[1 + ofs]];
+	if (++fuzzpos == FUZZTABLE) 
+	    fuzzpos = 0;
+	dest += SCREENWIDTH; 
+    } while (count--);
+} 
  
   
  
@@ -509,6 +528,29 @@ void R_DrawTranslatedColumn (void)
 	*dest = dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]];
 	dest += SCREENWIDTH;
 	
+	frac += fracstep; 
+    } while (count--); 
+} 
+
+// Low detail: R_DrawTranslatedColumn two pixels wide
+void R_DrawTranslatedColumnLow (void) 
+{ 
+    short	count; 
+    byte*	dest; 
+    fixed_t	frac;
+    fixed_t	fracstep;	 
+ 
+    count = dc_yh - dc_yl; 
+    if (count < 0) 
+	return; 
+
+    dest = ylookup[dc_yl] + columnofs[dc_x << 1]; 
+    fracstep = dc_iscale; 
+    frac = dc_texturemid + (dc_yl-centery)*fracstep; 
+    do 
+    {
+	dest[0] = dest[1] = dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]];
+	dest += SCREENWIDTH;
 	frac += fracstep; 
     } while (count--); 
 } 
@@ -597,11 +639,74 @@ unsigned short rotl16 (unsigned short value, unsigned int count) {
 
 //
 // Draws the actual span.
-void R_DrawSpan (void) 
-{ 
-    byte*		dest; 
+#if defined(USEASM) && defined(__M68020__)
+// 68020+ (TTDOOM): the loop below by hand, bit-identical. gcc reloads the
+// shift count and uses immediate masks in the loop (14 instructions a
+// pixel); this keeps the masks in registers, takes x with a rotate instead
+// of a 26-bit shift, needs no zero-extend of the texel (d5 stays clear) and
+// draws two pixels an iteration: 10.5 instructions a pixel. Low detail
+// (R_DrawSpanLow) writes each texel twice.
+#define R_DRAWSPAN_PIXEL \
+        "move.l  %[frac],%%d1               \n\t" \
+        "and.l   %%d6,%%d1                  \n\t" /* x int 31-26, y int 15-10 */ \
+        "move.l  %%d1,%%d2                  \n\t" \
+        "lsr.w   #4,%%d1                    \n\t" /* y int to 11-6 */ \
+        "rol.l   #6,%%d2                    \n\t" /* x int to 5-0 */ \
+        "or.w    %%d2,%%d1                  \n\t" /* spot */ \
+        "move.b  (%[src],%%d1.w),%%d5       \n\t" \
+        ".if %c[low]                        \n\t" \
+        "move.b  (%[cmap],%%d5.w),%%d5       \n\t" \
+        "move.b  %%d5,(%[dest])+            \n\t" \
+        "move.b  %%d5,(%[dest])+            \n\t" \
+        ".else                              \n\t" \
+        "move.b  (%[cmap],%%d5.w),(%[dest])+ \n\t" \
+        ".endif                             \n\t" \
+        "add.l   %[step],%[frac]            \n\t" \
+        "and.l   %%d7,%[frac]               \n\t"
+
+static inline __attribute__((always_inline)) void R_DrawSpanAt (byte *dest, const int low)
+{
+    unsigned short n = ds_x2 - ds_x1 + 1;   // texels
+    fixed_2in1_t frac = pack(ds_xfrac, ds_yfrac);
+    fixed_2in1_t step = pack(ds_xstep, ds_ystep);
+
+    asm volatile (
+        "moveq   #0,%%d5                    \n\t"
+        "move.l  #0xfc00fc00,%%d6           \n\t"
+        "move.l  #0xfffefffe,%%d7           \n\t"
+        "lsr.w   #1,%[n]                    \n\t" // pairs; odd pixel to C
+        "bcc.s   1f                         \n\t"
+        R_DRAWSPAN_PIXEL
+        "1:                                 \n\t"
+        "subq.w  #1,%[n]                    \n\t"
+        "bmi.s   3f                         \n\t"
+        "2:                                 \n\t"
+        R_DRAWSPAN_PIXEL
+        R_DRAWSPAN_PIXEL
+        "dbra    %[n],2b                    \n\t"
+        "3:                                 \n\t"
+        : [dest] "+a"(dest), [frac] "+d"(frac), [n] "+d"(n)
+        : [src] "a"(ds_source), [cmap] "a"(ds_colormap), [step] "d"(step),
+          [low] "i"(low)
+        : "d1", "d2", "d5", "d6", "d7", "cc", "memory");
+}
+
+void R_DrawSpan (void)
+{
+    R_DrawSpanAt (ylookup[ds_y] + columnofs[ds_x1], 0);
+}
+
+// Low detail: view columns are two screen columns wide
+void R_DrawSpanLow (void)
+{
+    R_DrawSpanAt (ylookup[ds_y] + columnofs[ds_x1 << 1], 1);
+}
+#else
+void R_DrawSpan (void)
+{
+    byte*		dest;
     short		count;
-    short		spot; 
+    short		spot;
 	 
 #ifdef RANGECHECK 
     if (ds_x2 < ds_x1
@@ -644,9 +749,10 @@ void R_DrawSpan (void)
 	// Next step in u,v.
         frac += step;
         frac &= mask;
-	
-    } while (count--); 
-} 
+
+    } while (count--);
+}
+#endif
 
 
 
@@ -725,7 +831,9 @@ void R_DrawSpan (void)
 
 //
 // Again..
+// (68000; 68020+ has the asm version beside R_DrawSpan.)
 //
+#if !(defined(USEASM) && defined(__M68020__))
 void R_DrawSpanLow (void) 
 { 
     fixed_t		xfrac;
@@ -749,13 +857,9 @@ void R_DrawSpanLow (void)
     xfrac = ds_xfrac; 
     yfrac = ds_yfrac; 
 
-    // Blocky mode, need to multiply by 2.
-    ds_x1 <<= 1;
-    ds_x2 <<= 1;
-    
-    dest = ylookup[ds_y] + columnofs[ds_x1];
-  
-    
+    // Blocky mode: each texel two screen columns wide. (id's version doubled
+    // ds_x1 / ds_x2 before counting, so drew twice the span.)
+    dest = ylookup[ds_y] + columnofs[ds_x1 << 1];
     count = ds_x2 - ds_x1; 
     do 
     { 
@@ -770,6 +874,7 @@ void R_DrawSpanLow (void)
 
     } while (count--); 
 }
+#endif
 
 //
 // R_InitBuffer 

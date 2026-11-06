@@ -483,7 +483,8 @@ fixed_t R_ScaleFromGlobalAngle (angle_t visangle)
     // both sines are allways positive
     sinea = finesine[anglea>>ANGLETOFINESHIFT];	
     sineb = finesine[angleb>>ANGLETOFINESHIFT];
-    num = FixedScale32(projection,sineb)<<detailshift;
+    // Walls' vertical scale (and depth, for sprite clipping)
+    num = YASPECT(FixedScale32(projection,sineb)<<detailshift);
     den = FixedScale32(rw_distance,sinea);
 
     if (den > num>>16)
@@ -715,8 +716,8 @@ void R_ExecuteSetViewSize (void)
     else
     {
 	colfunc = basecolfunc = R_DrawColumnLow;
-	fuzzcolfunc = R_DrawFuzzColumn;
-	transcolfunc = R_DrawTranslatedColumn;
+	fuzzcolfunc = R_DrawFuzzColumnLow;
+	transcolfunc = R_DrawTranslatedColumnLow;
 	spanfunc = R_DrawSpanLow;
     }
 
@@ -737,7 +738,7 @@ void R_ExecuteSetViewSize (void)
     {
 	dy = ((i-viewheight/2)<<FRACBITS)+FRACUNIT/2;
 	dy = abs(dy);
-	yslope[i] = FixedDiv ( (viewwidth<<detailshift)/2*FRACUNIT, dy);
+	yslope[i] = FixedDiv ( YASPECT((viewwidth<<detailshift)/2*FRACUNIT), dy);
     }
 	
     for (i=0 ; i<viewwidth ; i++)

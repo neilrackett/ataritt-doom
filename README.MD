@@ -1,120 +1,57 @@
-# STDOOM MD
+# TTDOOM
 
-[STDOOM](https://github.com/indyjo/STDOOM) + [DOOM Accelerator](sidecart/README.md) = Playable on a real ST?
+[STDOOM](https://github.com/indyjo/STDOOM) expanded and accelerated for Atari TT 
+and Falcon, by [Neil Rackett](https://neilrackett.com/atarist)
 
 ![title screen](titlepic.png)
 ![screenshot](screen1.png)
 
 ## Introduction
 
-This is an experiment by [Neil Rackett](https://x.com/neilrackett) to see if it's possible to combine Mega STE optimisations and the raw power of a SidecarTridge Multi-device to make Jonas Eschenburg's [STDOOM](https://github.com/indyjo/STDOOM) playable on real Atari ST hardware.
+Welcome to TTDOOM: full screen, full colour DOOM on the Atari TT or Falcon, thanks to an optimised 68030 rendering pipeline that enables it to run at close to original speed at 320x240 in 256 colours.
 
 ## System requirements
 
-- Atari ST with at least 4MB of RAM.
-
-Optional performance boosters:
-
-- [SidecarTridge Multi-device](https://sidecartridge.com) with [DOOM Accelerator](sidecart/README.md).
-- Atari Mega STE (uses 16MHz + cache if available)
-- 68881 or 68882 FPU (supports SFP-004 memory mapped FPU)
-
-Without these, it's just regular STDOOM and will most likely be unplayably slow on an 8MHz ST.
-
-### Atari TT and Falcon
-
-`TTDOOM.TOS` is a separate build for the TT and Falcon: 320x240 in 256 colours, compiled for the 68030. It needs a colour monitor (or a TV, on a Falcon) and sets the display mode itself, whatever the desktop's resolution:
-
-- **TT:** TT Low (320x480), each line shown twice.
-- **Falcon on VGA:** 320x240.
-- **Falcon on RGB or TV:** 384x240 overscan, with the picture centred.
-
-The 3D view and status bar use the full 240 lines. Title pages, menus, the intermission and the finale are 320x200 artwork, so they're centred with black bars above and below. The DOOM Accelerator is not used on these machines.
+- Atari TT or Falcon with at least 2MB RAM
+- 5MB hard drive space
 
 ## How to play
 
-- Install the [DOOM Accelerator](sidecart/README.md) microfirmware on your SidecarTridge Multi-device.
-- Copy the `STDOOM.TOS` executable into a folder on your ST's (real or emulated) hard drive.
-- Put a WAD file like `DOOM1.WAD` next to it.
-- Start `STDOOM.TOS`.
-- Use keyboard or mouse for control, just as in the original game.
-
-TOS file and microfirmware are available from the [releases page](https://github.com/neilrackett/atarist-stdoom/releases).
+- Download `TTDOOM.TOS` and `DOOM1.WAD` from the [releases page](https://neilrackett.com/atarist/atarist-stdoom).
+- Copy them to your hard drive.
+- Run `TTDOOM.TOS`.
 
 ## Features
 
-- Runs DOOM (and DOOM II) on Atari ST computers.
-- Supports low resolution (320x200, 16 colors).
-- `TTDOOM.TOS`: 320x240 in 256 colours on the Atari TT and Falcon.
-- Zoomed mode for higher performance (activate by reducing window size using = key or menu).
-- Audio sample playback using STe DMA sound.
-- Music playback using the YM-2149 soundchip (work in progress).
-- Controllable with keyboard and mouse.
+- 320x240 in 256 colours
+- Zoomed mode for higher performance (activate by reducing window size using = key or menu)
+- DMA sound effects
+- YM-2149 music
+- Controllable with keyboard and mouse
+- Network gameplay not supported
 
-### DOOM Accelerator
+## Compiling
 
-With a [SidecarTridge Multi-device](https://sidecartridge.com) running the [DOOM Accelerator](sidecart/README.md) firmware, the chunky-to-planar conversion and all 16-colour reduction are offloaded to the RP2040, and the look is selectable at runtime from the numeric keypad (your choice persists in `doomrc.cfg`):
+The easiest way to compile TTDOOM is to use [`atarist-toolkit-docker`](https://github.com/sidecartridge/atarist-toolkit-docker).
 
-- **Keypad `*`** — cycle the **dither mode**.
-- **Keypad `/`** — cycle the **palette** (the 16 on-screen colours).
+```bash
+stcmd make
+```
 
-When the view is shrunk (smaller window), the RP2040 scales it up to fill the viewport with an even border — so smaller views look full-size _and_ run faster, because fewer pixels are uploaded each frame.
+## Benchmark
 
-| Keypad `*` — dither | Description                           |
-| ------------------- | ------------------------------------- |
-| Nearest             | Closest palette colour, no dithering  |
-| 2×2 Bayer           | Ordered dither, 2×2 matrix            |
-| 4×4 Bayer           | Ordered dither, 4×4 matrix            |
-| Halftone            | 4×4 clustered-dot ("newspaper print") |
-
-| Keypad `/` — palette | Description                                |
-| -------------------- | ------------------------------------------ |
-| Fixed                | Hand-tuned subset of the DOOM palette      |
-| Generated            | Median-cut + k-means from the live palette |
-| EGA                  | IBM EGA 16 colours                         |
-| C64                  | Commodore 64                               |
-| Spectrum             | ZX Spectrum                                |
-| PICO-8               | PICO-8 fantasy console                     |
-| Greyscale            | 16-step grey ramp                          |
-
-Each dither mode combines with any palette.
-
-### Not implemented
-
-- Network gameplay
-
-## How to compile
-
-You need a C compiler and GNU Make. I recommend compiling with [`atarist-toolkit-docker`](https://github.com/sidecartridge/atarist-toolkit-docker).
-
-To compile STDOOM, run `make stdoom`. This builds both `STDOOM.TOS` (ST/STE) and `TTDOOM.TOS` (TT/Falcon) into `linuxdoom-1.10/build/dist/`. To build just one, run `make -C linuxdoom-1.10 stdoom` or `make -C linuxdoom-1.10 ttdoom` (inside the toolchain, for example via `stcmd`).
-
-To compile the STDOOM Accellerator firmware, run `make sidecart`; see the [`sidecart/README.md`](sidecart/README.md) file for details.
-
-STDOOM has the following compile-time dependencies:
-
-- mintlib https://github.com/freemint/mintlib
-- fdlibm https://github.com/freemint/fdlibm
-
-### A word on "fastcall"
-
-STDOOM is able to use the 'fastcall' calling convention, available in [Thorsten Otto's Crossmint tools](https://www.tho-otto.de/crossmint.php).
-
-If you want to use `-mfastcall`, you must ensure that all libraries, including libc and libm, also support fastcall.
-
-## How to benchmark
-
-- Rename `STDOOM.TOS` to `STDOOM.TTP`
+- Rename `TTDOOM.TOS` to `TTDOOM.TTP`
 - On start, enter parameters: `-timedemo demo3 -nosound`
 - The demo plays. When it's finished, a message says:
   Error: timed 2134 gametics in x realtics
 - x is the time elapsed in 1/35th of a second. Calculate FPS: 35\*2134/x
 
-## Command-line options
+## Atari ST
 
-STDOOM MD supports the same command-line options of the original Linuxdoom, plus:
+This project also includes an experimental version of STDOOM for ST users, with various optimisations to nudge it closer to being playable on an ST, including:
 
-- `-nomusic` disables YM-2149 soundchip music.
-- `-nosfx` disables STE DMA sound effects.
-- `-nosound` disables sound altogether.
-- `-nomste16` skips the Mega STE 16MHz speed switch at startup (uses existing speed setting).
+- [DOOM Accelerator](sidecart/README.md) for [SidecarTridge Multi-device](https://sidecartridge.com) to handle C2P
+- Auto switch to 16MHz+cache on Atari Mega STE
+- Supports SFP-004 memory mapped FPU if you've installed a 68881 or 68882 FPU
+
+They help a little, but If you really want to run DOOM on an ST, download [MD/DOOM](https://neilrackett.com/atarist/md-doom) for your SidecarT instead.

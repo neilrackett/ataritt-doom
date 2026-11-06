@@ -162,7 +162,7 @@ void HUlib_eraseTextLine(hu_textline_t* l)
 	    else
 	    {
 		R_VideoErase(yoffset, viewwindowx); // erase left border
-		R_VideoErase(yoffset + viewwindowx + viewwidth, viewwindowx);
+		R_VideoErase(yoffset + viewwindowx + scaledviewwidth, viewwindowx);
 		// erase right border
 	    }
 	}
