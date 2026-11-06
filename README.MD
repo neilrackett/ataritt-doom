@@ -3,7 +3,7 @@
 <img src="docs/titlepic.png" alt="TTDOOM title screen" width="320" />
 <img src="docs/screen1.png" alt="TTDOOM screenshot" width="320" />
 
-[STDOOM](https://github.com/indyjo/STDOOM) expanded and accelerated for Atari TT 
+[STDOOM](https://github.com/indyjo/STDOOM) expanded and accelerated for Atari TT
 and Falcon, by [Neil Rackett](https://neilrackett.com/atarist)
 
 ## Introduction
@@ -27,14 +27,37 @@ Welcome to TTDOOM: full screen, full colour DOOM on the Atari TT or Falcon, than
 - Zoomed mode for higher performance (activate by reducing window size using = key or menu)
 - DMA sound effects
 - YM-2149 music
-- Controllable with keyboard and mouse
 - Network gameplay not supported
+
+## Controls
+
+| Action                | Keyboard       | Mouse                 | Joystick       | Gamepad                    |
+| --------------------- | -------------- | --------------------- | -------------- | -------------------------- |
+| Move forward and back | Up and down    | Move forward and back | Up and down    | D-pad or left stick        |
+| Turn                  | Left and right | Move left and right   | Left and right | D-pad or right stick       |
+| Strafe left and right | `,` and `.`    | Right button and move |                | Shoulders or left stick    |
+| Strafe while held     | Alt            | Right button          |                | West (X)                   |
+| Fire                  | Control        | Left button           | Fire           | South (A) or right trigger |
+| Use, open             | Space          |                       |                | East (B)                   |
+| Run                   | Shift          |                       |                | North (Y) or left trigger  |
+| Weapons               | `1` to `7`     |                       |                |                            |
+| Automap               | Tab            |                       |                | Select                     |
+| Menu                  | Esc            |                       |                | Start                      |
+
+The joystick goes in port 1. Gamepads work through any
+[Xpad](https://github.com/neilrackett/atarist-xpad) provider, such as COMpad,
+MD/Sidepad or a Jaguar pad in a Falcon's enhanced port; the left stick strafes
+on an analogue pad. In the menus the d-pad moves, south selects and east goes
+back. Pad buttons follow your key bindings, so redefining a key in
+`doomrc.cfg` moves its button too. Start TTDOOM with `-noxpad` to ignore any
+provider.
 
 ## Compiling
 
 The easiest way to compile TTDOOM is to use [`atarist-toolkit-docker`](https://github.com/sidecartridge/atarist-toolkit-docker).
 
 ```bash
+git submodule update --init src/atarist-sfp004 lib/xpad
 stcmd make
 ```
 
@@ -55,3 +78,8 @@ This project also includes some of my abandoned STDOOM experiments, with various
 - Support for SFP-004 memory mapped FPU if you've installed a 68881 or 68882 FPU
 
 They help a little, but If you really want to run DOOM on an ST, download [MD/DOOM](https://neilrackett.com/atarist/md-doom) for your SidecarT instead.
+
+## Licences
+
+Controller input via Xpad, Copyright (c) 2026 Neil Rackett,
+BSD-2-Clause. See [its licence](https://github.com/neilrackett/atarist-xpad/blob/v1.1.12/LICENSE).

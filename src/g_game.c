@@ -69,6 +69,7 @@ rcsid[] = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 
 
 #include "g_game.h"
+#include "i_xpad.h"
 
 
 #define SAVEGAMESIZE	0x2c000
@@ -323,6 +324,10 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	side += sidemove[speed]; 
     if (gamekeydown[key_strafeleft]) 
 	side -= sidemove[speed];
+
+    // Xpad analogue sticks: the left one moves and strafes, the right turns
+    I_XpadMove (&forward, &side, &cmd->angleturn,
+		forwardmove[speed], sidemove[speed], angleturn[1]);
     
     // buttons
     cmd->chatchar = HU_dequeueChatChar(); 

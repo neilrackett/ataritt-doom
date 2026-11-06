@@ -7,3 +7,6 @@
 [submodule "linuxdoom-1.10/atarist-sfp004"]
 	path = src/atarist-sfp004
 	url = https://github.com/neilrackett/atarist-sfp004.git
+[submodule "lib/xpad"]
+	path = lib/xpad
+	url = https://github.com/neilrackett/atarist-xpad

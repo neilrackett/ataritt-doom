@@ -45,6 +45,7 @@ rcsid[] = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp $";
 #pragma implementation "i_system.h"
 #endif
 #include "i_system.h"
+#include "i_xpad.h"
 #include "m_argv.h"
 #include "atari_sfp004.h"
 
@@ -123,6 +124,8 @@ int  I_GetTime (void)
 void I_Init (void)
 {
     long super_ret;
+    // Xpad's discovery uses Supexec: before entering supervisor mode
+    I_InitXpad();
     printf("I_Init: Enabling supervisor mode.\n");
     super_ret = Super(0L);
     old_super_stack = super_ret;

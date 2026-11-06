@@ -38,6 +38,9 @@ else
 SRC=src
 OBJDIR=build
 DISTDIR=dist
+# Xpad gamepads: the lib/xpad submodule, pinned to a release. Only the
+# consumer half (xpad.c): xpad_provider.c is for providers.
+XPAD=lib/xpad/src
 
 FASTCALL=0
 
@@ -54,14 +57,14 @@ endif
 # SFP-004 FPU library lives in the src/atarist-sfp004 submodule. -I makes
 # #include "atari_sfp004.h" resolve; the vpath below lets the %.o rules find
 # atari_sfp004.c there (OBJS still lists a flat $(OBJDIR)/atari_sfp004.o).
-CFLAGS=-O3 -Wall -DNORMALUNIX -DLINUX -D__BIG_ENDIAN__ -DUSEASM $(FASTCALLFLAG) -std=c99 -fasm -I$(SRC)/atarist-sfp004
+CFLAGS=-O3 -Wall -DNORMALUNIX -DLINUX -D__BIG_ENDIAN__ -DUSEASM $(FASTCALLFLAG) -std=c99 -fasm -I$(SRC)/atarist-sfp004 -I$(XPAD)
 CFLAGS20=$(CFLAGS) -m68020-60 -mtune=68020 -msoft-float
 CFLAGS2F=$(CFLAGS) -m68020-60 -mtune=68020 -m68881
 # TTDOOM: TT / Falcon, 320x240 in 256 colours, 68030 code. Soft-float so it
 # runs on a Falcon without an FPU (Doom's renderer is fixed-point anyway).
 CFLAGSTT=$(CFLAGS) -m68020-60 -mtune=68030 -msoft-float -DTTDOOM -DSCREENHEIGHT=240
 
-vpath %.c $(SRC) $(SRC)/atarist-sfp004
+vpath %.c $(SRC) $(SRC)/atarist-sfp004 $(XPAD)
 vpath %.S $(SRC)
 LDLIBS=$(SRC)/deps/68000.soft-float$(LIBVARIANT)/libm.a
 LDLIBS20=$(SRC)/deps/68020-60.soft-float$(LIBVARIANT)/libm.a
@@ -80,6 +83,8 @@ OBJS=				\
 		$(OBJDIR)/atari_checkcpu.o	\
 		$(OBJDIR)/atari_sfp004.o	\
 		$(OBJDIR)/atari_ym.o		\
+		$(OBJDIR)/i_xpad.o		\
+		$(OBJDIR)/xpad.o		\
 		$(OBJDIR)/sidecart_c2p.o	\
 		$(OBJDIR)/sidecart_md.o		\
 		$(OBJDIR)/sidecart_stubs.o	\

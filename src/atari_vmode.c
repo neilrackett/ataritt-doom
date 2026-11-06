@@ -203,6 +203,23 @@ void atari_vmode_set(atari_vmode_t *m)
         (void)Setscreen(page, page, TT_LOW_REZ);
         vmode_left = 0;
     }
+    /* Black until Doom sets its palette with the first frame: the cleared
+     * screen would otherwise show the desktop's colour 0, white. After the
+     * next VBL, which lands any colours the XBIOS holds for the mode change
+     * (bounded, as in atari_vmode_restore). */
+    {
+        long frame = FRCLOCK, n;
+
+        for (n = 0; n < 400000L && FRCLOCK == frame; n++)
+            ;
+        for (i = 0; i < 256; i++)
+        {
+            if (m->falcon)
+                FALCON_PALETTE[i] = 0;
+            else
+                TT_PALETTE[i] = 0;
+        }
+    }
     I_SoundResumeVbl();
     m->screen = page + vmode_left;
     vmode_machine = machine;

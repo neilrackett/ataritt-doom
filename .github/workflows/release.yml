@@ -1,0 +1,94 @@
+name: Release
+
+# Rolling release: build TTDOOM.TOS, move the lightweight "latest" tag
+# onto the commit it was built from, and replace TTDOOM.TOS on the
+# "latest" release. The release's title and notes are left exactly as
+# they are -- `gh release upload` touches assets only -- and so are its
+# other files: nothing else is built or uploaded here. The asset name
+# never changes, so a download link handed to someone keeps working.
+
+on:
+  # Anything landing on main is a release: a merge, or a direct push.
+  # Tag pushes do not match a branch filter, so moving the latest tag
+  # cannot trigger this again.
+  push:
+    branches:
+      - main
+    # A push that only touches prose, the screenshots or the SidecarTridge
+    # firmware cannot change TTDOOM.TOS. GitHub still runs the job when a
+    # push touches anything else as well, and workflow_dispatch forces
+    # one by hand.
+    paths-ignore:
+      - '**.md'
+      - '**.MD'
+      - 'docs/**'
+      - 'sidecart/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Two merges in quick succession would otherwise race: both move the
+# latest tag and clobber the same asset, and the loser would decide
+# what the release ends up holding. Newest commit wins instead.
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+env:
+  # stcmd runs docker with -it unless this is set, and a runner has no
+  # terminal.
+  STCMD_NO_TTY: 1
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # The push trigger already filters to main; this is what stops a
+    # manual dispatch from some other branch releasing it.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v5
+
+      - name: Check out the submodules the game needs
+        # Only these two: the SFP-004 FPU library and Xpad. The
+        # SidecarTridge firmware's Pico SDK and Pico Extras are large and
+        # play no part in TTDOOM.TOS, so a recursive checkout would only
+        # slow every release down.
+        run: git submodule update --init src/atarist-sfp004 lib/xpad
+
+      - name: Install the Atari ST toolkit
+        # Generates /usr/local/bin/stcmd, which runs the m68k build in a
+        # container.
+        run: curl -sL https://github.com/sidecartridge/atarist-toolkit-docker/releases/latest/download/install_atarist_toolkit_docker.sh | bash
+
+      - name: Build
+        run: stcmd make ttdoom
+
+      - name: Move the latest tag onto this commit
+        # The "latest" release is attached to this tag, so moving it
+        # keeps the release's source link pointing at the commit the
+        # attached binary was built from. Through the API rather than
+        # `git push`: pushing a tag is refused when the commit it points
+        # at touches .github/workflows and the token has no workflow
+        # scope, which is exactly the commit that adds this file. PATCH
+        # first because the tag already exists; POST covers a repository
+        # where it does not yet.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/latest" \
+            -f sha="$GITHUB_SHA" -F force=true --silent \
+            || gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+                 -f ref=refs/tags/latest -f sha="$GITHUB_SHA" --silent
+
+      - name: Replace TTDOOM.TOS on the latest release
+        # The release is written by hand, so this refuses to create one
+        # with made-up text if it has gone missing.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view latest >/dev/null 2>&1 \
+            || { echo "No 'latest' release to upload to: create it by hand first."; exit 1; }
+          gh release upload latest dist/TTDOOM.TOS --clobber
+          echo "Published TTDOOM.TOS from $GITHUB_SHA to the latest release."

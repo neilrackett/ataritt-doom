@@ -277,6 +277,45 @@ make clean            # build/ and those programs (the WADs in dist/ stay)
 make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION].uf2
 ```
 
+## Release
+
+`.github/workflows/release.yml`: every push to `main` (except prose,
+`docs/` and `sidecart/` only) builds `dist/TTDOOM.TOS` with `stcmd make
+ttdoom`, moves the lightweight `latest` tag onto the commit through the
+API, and replaces `TTDOOM.TOS` on the hand-written `latest` release with
+`gh release upload --clobber`: no title or notes change, and no other
+asset is added or touched. It checks out only the `src/atarist-sfp004` and
+`lib/xpad` submodules, not the Pico SDK. No version tags yet.
+
+## Xpad (gamepads)
+
+Anything that reads or publishes Xpad: read
+`lib/xpad/.claude/skills/xpad/SKILL.md` first.
+
+- `lib/xpad` is the atarist-xpad submodule, pinned to a release tag; only
+  its consumer half (`xpad.c`) is built, into both programs. The README
+  carries the licence line, linking to the licence at the pinned tag: keep
+  that link's tag in step when the submodule moves.
+- `src/i_xpad.c` finds the provider in `I_Init` (user mode, before
+  `Super`; `-noxpad` skips it) and polls the first connected pad from
+  `I_StartTic`. Button changes become key events through Doom's own
+  bindings (`key_fire` etc.), the reverse of Xpad's keyboard driver; in the
+  menus the d-pad is the arrows, south Enter (`y` to a question), east
+  Backspace (`n`). A button releases the key it pressed even if the menu
+  changed meanwhile, and a button held across a menu change presses
+  nothing. `I_XpadMove` (called from `G_BuildTiccmd`) adds analogue
+  movement; in play the d-pad bits a provider folds from a deflected left
+  stick are ignored, so the stick strafes rather than turns.
+- STDOOM reads the IKBD itself (the `$118` handler), so providers' joyvec /
+  mouse injection, XPADEMU and the joystick/keyboard example drivers can't
+  reach it; joystick 1 packets (`$FF`) go to `I_XpadJoystick` and merge in
+  as a one-button pad.
+- Doom doesn't run `I_StartTic` during a screen melt, so a pad tap shorter
+  than a melt is missed (keyboard presses are buffered and aren't).
+- Testing: a throwaway provider that publishes one analogue pad and prints
+  its buffers' addresses, then Hatari's `w l <addr> <buttons>` (and `w` for
+  the stick bytes at +4..+7) through the command FIFO drives it.
+
 ## Shared memory map (ROM4 base `$FA0000`)
 
 | Offset  | ST address | Size    | Purpose                                         |
@@ -299,6 +338,9 @@ make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION
   `Setscreen(..,7)` (C2P writes each line to two scanlines); Falcon
   `VsetScreen(..,3,BPS8|COL40|VGA|VERTFLAG)` on VGA, or `BPS8|COL40|PAL|OVERSCAN`
   (384 wide, picture 32 in) on RGB/TV. Restores the desktop mode + palette.
+  The palette is blacked out after the mode change (the desktop's colour 0
+  would show the cleared screen white until Doom's first frame), and the
+  C2P's palette grid diagnostic is drawn only with `-devparm`.
 - **240 lines, DOS proportions:** `SCREENHEIGHT` is compile-time. 320x200
   was shown on 4:3 (DOS, ST), so TTDOOM's square-pixel 240 lines stand for
   those 200: 320x200 art (pages, menus, WI, finale) is drawn with `v_page` set

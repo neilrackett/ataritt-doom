@@ -31,6 +31,7 @@ rcsid[] = "$Id: i_x.c,v 1.6 1997/02/03 22:45:10 b1 Exp $";
 #include <mint/osbind.h>
 #include "atari_c2p.h"
 #include "sidecart_c2p.h"
+#include "i_xpad.h"
 #ifdef TTDOOM
 #include "atari_vmode.h"
 #endif
@@ -275,13 +276,16 @@ void I_StartTic (void)
             }
             continue;
         } else if (data >= 0xfe) {
+            // Joystick event: 0xfe for port 0 (the mouse port), 0xff for
+            // joystick 1, which i_xpad.c reads as a one-button pad
             if (!can_read_bytes_from_ringbuf(1)) {
                 // Event not complete! Unread event and break loop.
                 next_read = next_read_copy;
                 break;
             }
-            read_byte_from_ringbuf();
-            // TODO: Support joystick events
+            int joy = read_byte_from_ringbuf();
+            if (data == 0xff)
+                I_XpadJoystick(joy);
             continue;
         } else {
             // TODO: Implement all other IKBD event types.
@@ -291,6 +295,7 @@ void I_StartTic (void)
         }
         D_PostEvent(&event);
     }
+    I_XpadStartTic();
 }
 
 
@@ -407,7 +412,9 @@ void I_InitGraphics(void)
     (void)Cconws("\33f");
     st_screen = vmode.screen;
     init_c2p_8bpp(vmode.stride, vmode.dbl, vmode.falcon);
-    draw_palette_table(st_screen);
+    /* The C2P's palette grid, a diagnostic: with -devparm only */
+    if (devparm)
+        draw_palette_table(st_screen);
 #else
     st_screen = Physbase();
     printf("Replacing keyboard interrupt.\n");
@@ -428,10 +435,10 @@ void I_InitGraphics(void)
      * accelerated ones if the accelerator was detected. */
     sidecart_c2p_install();
     save_palette(old_palette);
-    /* The palette grid is a software-C2P diagnostic of the 16-colour ST palette;
-     * skip it when the accelerator owns rendering (it would show the SW palette
-     * and is drawn by the SW path). */
-    if (!c2p_md_active)
+    /* The palette grid is a software-C2P diagnostic of the 16-colour ST palette:
+     * with -devparm only, and never when the accelerator owns rendering (it
+     * would show the SW palette and is drawn by the SW path). */
+    if (devparm && !c2p_md_active)
         draw_palette_table(st_screen);
     printf ("Done.\n");
     // Set cursor to home and stop blinking.
