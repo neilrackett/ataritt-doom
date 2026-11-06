@@ -29,37 +29,37 @@ tests: pingtest c2ptest recttest rndrtest uptest
 .PHONY: pingtest
 pingtest:
 	ST_WORKING_FOLDER=$(ROOT_DIR) stcmd m68k-atari-mint-gcc -O2 \
-		-I sidecart/tests -I linuxdoom-1.10 \
+		-I sidecart/tests -I src \
 		-o sidecart/tests/PINGTEST.TOS \
-		sidecart/tests/pingtest.c linuxdoom-1.10/sidecart_md.c \
-		linuxdoom-1.10/sidecart_stubs.S
+		sidecart/tests/pingtest.c src/sidecart_md.c \
+		src/sidecart_stubs.S
 
 ## Build the standalone C2P round-trip test app.
 .PHONY: c2ptest
 c2ptest:
 	ST_WORKING_FOLDER=$(ROOT_DIR) stcmd m68k-atari-mint-gcc -O2 \
-		-I sidecart/tests -I linuxdoom-1.10 \
+		-I sidecart/tests -I src \
 		-o sidecart/tests/C2PTEST.TOS \
-		sidecart/tests/c2ptest.c linuxdoom-1.10/sidecart_md.c \
-		linuxdoom-1.10/sidecart_stubs.S
+		sidecart/tests/c2ptest.c src/sidecart_md.c \
+		src/sidecart_stubs.S
 
 ## Build the standalone rect C2P test app.
 .PHONY: recttest
 recttest:
 	ST_WORKING_FOLDER=$(ROOT_DIR) stcmd m68k-atari-mint-gcc -O2 \
-		-I sidecart/tests -I linuxdoom-1.10 \
+		-I sidecart/tests -I src \
 		-o sidecart/tests/RECTTEST.TOS \
-		sidecart/tests/recttest.c linuxdoom-1.10/sidecart_md.c \
-		linuxdoom-1.10/sidecart_stubs.S
+		sidecart/tests/recttest.c src/sidecart_md.c \
+		src/sidecart_stubs.S
 
 ## Build the standalone render-mode (M4) test app.
 .PHONY: rndrtest
 rndrtest:
 	ST_WORKING_FOLDER=$(ROOT_DIR) stcmd m68k-atari-mint-gcc -O2 \
-		-I sidecart/tests -I linuxdoom-1.10 \
+		-I sidecart/tests -I src \
 		-o sidecart/tests/RNDRTEST.TOS \
-		sidecart/tests/rndrtest.c linuxdoom-1.10/sidecart_md.c \
-		linuxdoom-1.10/sidecart_stubs.S
+		sidecart/tests/rndrtest.c src/sidecart_md.c \
+		src/sidecart_stubs.S
 
 ## Build the standalone ST->cart upload benchmark.
 ## Regenerates doom_frames.h from the PNG screenshots first (host Python step,
@@ -68,10 +68,10 @@ rndrtest:
 uptest:
 	python3 $(ROOT_DIR)/sidecart/tests/png2chunky.py
 	ST_WORKING_FOLDER=$(ROOT_DIR) stcmd m68k-atari-mint-gcc -O2 \
-		-I sidecart/tests -I linuxdoom-1.10 \
+		-I sidecart/tests -I src \
 		-o sidecart/tests/UPTEST.TOS \
-		sidecart/tests/uptest.c linuxdoom-1.10/sidecart_md.c \
-		linuxdoom-1.10/sidecart_stubs.S
+		sidecart/tests/uptest.c src/sidecart_md.c \
+		src/sidecart_stubs.S
 
 ## Tag this version
 .PHONY: tag

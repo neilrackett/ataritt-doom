@@ -1,10 +1,10 @@
 # TTDOOM
 
+<img src="docs/titlepic.png" alt="TTDOOM title screen" width="320" />
+<img src="docs/screen1.png" alt="TTDOOM screenshot" width="320" />
+
 [STDOOM](https://github.com/indyjo/STDOOM) expanded and accelerated for Atari TT 
 and Falcon, by [Neil Rackett](https://neilrackett.com/atarist)
-
-![title screen](titlepic.png)
-![screenshot](screen1.png)
 
 ## Introduction
 
@@ -48,10 +48,10 @@ stcmd make
 
 ## Atari ST
 
-This project also includes an experimental version of STDOOM for ST users, with various optimisations to nudge it closer to being playable on an ST, including:
+This project also includes some of my abandoned STDOOM experiments, with various optimisations to nudge it closer to being playable on an ST, including:
 
 - [DOOM Accelerator](sidecart/README.md) for [SidecarTridge Multi-device](https://sidecartridge.com) to handle C2P
 - Auto switch to 16MHz+cache on Atari Mega STE
-- Supports SFP-004 memory mapped FPU if you've installed a 68881 or 68882 FPU
+- Support for SFP-004 memory mapped FPU if you've installed a 68881 or 68882 FPU
 
 They help a little, but If you really want to run DOOM on an ST, download [MD/DOOM](https://neilrackett.com/atarist/md-doom) for your SidecarT instead.

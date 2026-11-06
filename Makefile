@@ -1,10 +1,43 @@
 ################################################################
 #
-# $Id:$
+# STDOOM (Atari ST) and TTDOOM (Atari TT / Falcon)
 #
-# $Log:$
+#   make              dist/STDOOM.TOS and dist/TTDOOM.TOS
+#   make stdoom       dist/STDOOM.TOS
+#   make ttdoom       dist/TTDOOM.TOS
+#   make clean        removes build/ and those programs (not the WADs)
+#   make sidecart     the DOOM Accelerator firmware and its test apps
+#                     (sidecart/Makefile), e.g. make sidecart debug
 #
+# Sources are in src/, objects in build/, programs in dist/ beside the WADs.
+# The m68k-atari-mint toolchain comes from atarist-toolkit-docker: run on the
+# host, this Makefile runs the game build in it through stcmd.
+#
+################################################################
+
 CC = m68k-atari-mint-gcc
+
+.DEFAULT_GOAL := all
+.PHONY: all clean stdoom ttdoom sidecart
+# Extra goals are for sidecart/Makefile (make sidecart debug)
+.PHONY: $(filter-out all clean stdoom ttdoom sidecart,$(MAKECMDGOALS))
+
+# The firmware builds on the host (ARM toolchain; its ST test apps use stcmd)
+sidecart:
+	$(MAKE) -C sidecart $(filter-out $@,$(MAKECMDGOALS))
+
+ifeq ($(shell command -v $(CC) 2>/dev/null),)
+
+# Not in the toolchain container: run the game build there
+export STCMD_NO_TTY = 1
+all clean stdoom ttdoom:
+	stcmd make $(MAKEOVERRIDES) $@
+
+else
+
+SRC=src
+OBJDIR=build
+DISTDIR=dist
 
 FASTCALL=0
 
@@ -18,27 +51,22 @@ FASTCALLFLAG=
 LIBVARIANT=
 endif
 
-# SFP-004 FPU library lives in the atarist-sfp004 submodule. -I makes
+# SFP-004 FPU library lives in the src/atarist-sfp004 submodule. -I makes
 # #include "atari_sfp004.h" resolve; the vpath below lets the %.o rules find
 # atari_sfp004.c there (OBJS still lists a flat $(OBJDIR)/atari_sfp004.o).
-CFLAGS=-O3 -Wall -DNORMALUNIX -DLINUX -D__BIG_ENDIAN__ -DUSEASM $(FASTCALLFLAG) -std=c99 -fasm -Iatarist-sfp004
+CFLAGS=-O3 -Wall -DNORMALUNIX -DLINUX -D__BIG_ENDIAN__ -DUSEASM $(FASTCALLFLAG) -std=c99 -fasm -I$(SRC)/atarist-sfp004
 CFLAGS20=$(CFLAGS) -m68020-60 -mtune=68020 -msoft-float
 CFLAGS2F=$(CFLAGS) -m68020-60 -mtune=68020 -m68881
 # TTDOOM: TT / Falcon, 320x240 in 256 colours, 68030 code. Soft-float so it
 # runs on a Falcon without an FPU (Doom's renderer is fixed-point anyway).
 CFLAGSTT=$(CFLAGS) -m68020-60 -mtune=68030 -msoft-float -DTTDOOM -DSCREENHEIGHT=240
 
-vpath %.c atarist-sfp004
-LDFLAGS= -Wl,-Map=$@.map
-LDLIBS=./deps/68000.soft-float$(LIBVARIANT)/libm.a
-LDLIBS20=./deps/68020-60.soft-float$(LIBVARIANT)/libm.a
-LDLIBS2F=./deps/68020-60.68881$(LIBVARIANT)/libm.a
+vpath %.c $(SRC) $(SRC)/atarist-sfp004
+vpath %.S $(SRC)
+LDLIBS=$(SRC)/deps/68000.soft-float$(LIBVARIANT)/libm.a
+LDLIBS20=$(SRC)/deps/68020-60.soft-float$(LIBVARIANT)/libm.a
+LDLIBS2F=$(SRC)/deps/68020-60.68881$(LIBVARIANT)/libm.a
 LDLIBSTT=$(LDLIBS20)
-
-# subdirectory for objects
-O=build
-OBJDIR=$(O)/obj
-BUILDDIR=$(O)/dist
 
 EXT=.TOS
 TARGET=STDOOM$(EXT)
@@ -124,27 +152,26 @@ OBJS2F=$(OBJS:%.o=%.2f.o)
 SIDECART_OBJS=$(OBJDIR)/sidecart_c2p.o $(OBJDIR)/sidecart_md.o $(OBJDIR)/sidecart_stubs.o
 OBJSTT=$(patsubst %.o,%.tt.o,$(filter-out $(SIDECART_OBJS),$(OBJS))) $(OBJDIR)/atari_vmode.tt.o
 
-all:	 $(BUILDDIR)/$(TARGET) $(BUILDDIR)/$(TARGETTT) # $(BUILDDIR)/$(TARGET20) $(BUILDDIR)/$(TARGET2F)
+all:	 $(DISTDIR)/$(TARGET) $(DISTDIR)/$(TARGETTT) # $(DISTDIR)/$(TARGET20) $(DISTDIR)/$(TARGET2F)
 
-.PHONY: all clean stdoom ttdoom
-stdoom: $(BUILDDIR)/$(TARGET)
-ttdoom: $(BUILDDIR)/$(TARGETTT)
+stdoom: $(DISTDIR)/$(TARGET)
+ttdoom: $(DISTDIR)/$(TARGETTT)
 
+# dist/ also holds the WADs: remove only the programs built here
 clean:
 	rm -rf $(OBJDIR)
-	rm -f $(BUILDDIR)/$(TARGET) $(BUILDDIR)/$(TARGET20) $(BUILDDIR)/$(TARGET2F) $(BUILDDIR)/$(TARGETTT) \
-		$(BUILDDIR)/$(TARGET).map $(BUILDDIR)/$(TARGET20).map $(BUILDDIR)/$(TARGET2F).map $(BUILDDIR)/$(TARGETTT).map
+	rm -f $(DISTDIR)/$(TARGET) $(DISTDIR)/$(TARGET20) $(DISTDIR)/$(TARGET2F) $(DISTDIR)/$(TARGETTT)
 
-$(BUILDDIR)/$(TARGET):	$(OBJS) | $(BUILDDIR)
+$(DISTDIR)/$(TARGET):	$(OBJS) | $(DISTDIR)
 	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDLIBS)
 
-$(BUILDDIR)/$(TARGET20):	$(OBJS20) | $(BUILDDIR)
+$(DISTDIR)/$(TARGET20):	$(OBJS20) | $(DISTDIR)
 	$(CC) $(CFLAGS20) $(OBJS20) -o $@ $(LDLIBS20)
 
-$(BUILDDIR)/$(TARGET2F):	$(OBJS2F) | $(BUILDDIR)
+$(DISTDIR)/$(TARGET2F):	$(OBJS2F) | $(DISTDIR)
 	$(CC) $(CFLAGS2F) $(OBJS2F) -o $@ $(LDLIBS2F)
 
-$(BUILDDIR)/$(TARGETTT):	$(OBJSTT) | $(BUILDDIR)
+$(DISTDIR)/$(TARGETTT):	$(OBJSTT) | $(DISTDIR)
 	$(CC) $(CFLAGSTT) $(OBJSTT) -o $@ $(LDLIBSTT)
 
 $(OBJDIR)/%.tt.o:	%.c | $(OBJDIR)
@@ -180,9 +207,7 @@ $(OBJDIR)/%.20.s: %.c | $(OBJDIR)
 $(OBJDIR)/%.s: %.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -S -fverbose-asm -o $@
 
-$(OBJDIR) $(BUILDDIR):
+$(OBJDIR) $(DISTDIR):
 	mkdir -p $@
 
-#############################################################
-#
-#############################################################
+endif

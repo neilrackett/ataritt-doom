@@ -11,7 +11,7 @@ At the heart of your SidecarTridge Multi-device is an RP2040 processor with the 
 
 The DOOM Accelerator microfirmware is designed to harness that power to offload processor heavy processes like C2P to free up the main CPU.
 
-The ST host side lives in [`../linuxdoom-1.10`](../linuxdoom-1.10) (`sidecart_md.c/.h`, `sidecart_stubs.S`);
+The ST host side lives in [`../src`](../src) (`sidecart_md.c/.h`, `sidecart_stubs.S`);
 this directory is the RP2040 firmware.
 
 ## Installation
