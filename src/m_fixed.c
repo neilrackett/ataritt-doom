@@ -36,6 +36,7 @@ rcsid[] = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp $";
 #pragma implementation "m_fixed.h"
 #endif
 #include "m_fixed.h"
+#include <mint/cookie.h>
 
 #include "atari_sfp004.h"
 
@@ -62,8 +63,28 @@ static uint32_t mulu(uint16_t a, uint16_t b) {
 
 // Fixme. __USE_C_FIXED__ or something.
 
+#ifdef FIXEDMUL_MULS64
+int	fixedmul_muls64;	// see m_fixed.h
+#endif
+
+void M_InitFixed (void)
+{
+#ifdef FIXEDMUL_MULS64
+    long	cpu;
+
+    fixedmul_muls64 = Getcookie (C__CPU, &cpu) == C_FOUND
+	&& cpu >= 20 && cpu < 60;
+#endif
+}
+
+// On a 68020 to 68040 FixedMul is inline (m_fixed.h) and this is its
+// fallback for the 68060.
 fixed_t
+#ifdef FIXEDMUL_MULS64
+FixedMulSplit
+#else
 FixedMul
+#endif
 ( fixed_t	a,
   fixed_t	b )
 {

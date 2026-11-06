@@ -30,6 +30,7 @@ rcsid[] = "$Id: i_main.c,v 1.4 1997/02/03 22:45:10 b1 Exp $";
 
 #include "m_argv.h"
 #include "d_main.h"
+#include "m_fixed.h"
 #ifdef TTDOOM
 #include "atari_vmode.h"
 #endif
@@ -41,6 +42,7 @@ main
 { 
     myargc = argc; 
     myargv = argv; 
+    M_InitFixed ();
 
 #ifdef TTDOOM
     /* TTDOOM is built for the 68030 and the TT / Falcon video: on an ST,

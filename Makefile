@@ -19,8 +19,11 @@ CC = m68k-atari-mint-gcc
 
 .DEFAULT_GOAL := all
 .PHONY: all clean stdoom ttdoom sidecart
-# Extra goals are for sidecart/Makefile (make sidecart debug)
+# With sidecart, the other goals are for sidecart/Makefile (make sidecart
+# debug). Only then: make applies no pattern rule to a phony goal.
+ifneq ($(filter sidecart,$(MAKECMDGOALS)),)
 .PHONY: $(filter-out all clean stdoom ttdoom sidecart,$(MAKECMDGOALS))
+endif
 
 # The firmware builds on the host (ARM toolchain; its ST test apps use stcmd)
 sidecart:
@@ -58,23 +61,21 @@ endif
 # #include "atari_sfp004.h" resolve; the vpath below lets the %.o rules find
 # atari_sfp004.c there (OBJS still lists a flat $(OBJDIR)/atari_sfp004.o).
 CFLAGS=-O3 -Wall -DNORMALUNIX -DLINUX -D__BIG_ENDIAN__ -DUSEASM $(FASTCALLFLAG) -std=c99 -fasm -I$(SRC)/atarist-sfp004 -I$(XPAD)
-CFLAGS20=$(CFLAGS) -m68020-60 -mtune=68020 -msoft-float
-CFLAGS2F=$(CFLAGS) -m68020-60 -mtune=68020 -m68881
-# TTDOOM: TT / Falcon, 320x240 in 256 colours, 68030 code. Soft-float so it
+# TTDOOM: TT / Falcon, 320x240 in 256 colours, code for any 68020 to 68060.
+# No -mtune=68030: it turns divides by constants into 64-bit multiplies,
+# which a 68060 traps, and measured no faster on a 68030. Soft-float so it
 # runs on a Falcon without an FPU (Doom's renderer is fixed-point anyway).
-CFLAGSTT=$(CFLAGS) -m68020-60 -mtune=68030 -msoft-float -DTTDOOM -DSCREENHEIGHT=240
+# No frame pointer: gcc otherwise gives every function a link/unlk, the
+# per-column and per-span drawers included, and a6 is one more register.
+CFLAGSTT=$(CFLAGS) -m68020-60 -msoft-float -fomit-frame-pointer -DTTDOOM -DSCREENHEIGHT=240
 
 vpath %.c $(SRC) $(SRC)/atarist-sfp004 $(XPAD)
 vpath %.S $(SRC)
 LDLIBS=$(SRC)/deps/68000.soft-float$(LIBVARIANT)/libm.a
-LDLIBS20=$(SRC)/deps/68020-60.soft-float$(LIBVARIANT)/libm.a
-LDLIBS2F=$(SRC)/deps/68020-60.68881$(LIBVARIANT)/libm.a
-LDLIBSTT=$(LDLIBS20)
+LDLIBSTT=$(SRC)/deps/68020-60.soft-float$(LIBVARIANT)/libm.a
 
 EXT=.TOS
 TARGET=STDOOM$(EXT)
-TARGET20=STDOOM20$(EXT)
-TARGET2F=STDOOM2F$(EXT)
 TARGETTT=TTDOOM$(EXT)
 
 # not too sophisticated dependency
@@ -150,14 +151,12 @@ OBJS=				\
 		$(OBJDIR)/info.o				\
 		$(OBJDIR)/sounds.o		\
 		$(OBJDIR)/i_main.o
-OBJS20=$(OBJS:%.o=%.20.o)
-OBJS2F=$(OBJS:%.o=%.2f.o)
 # TTDOOM: no SidecarTridge accelerator (ST Low only), plus the TT / Falcon
 # video mode code.
 SIDECART_OBJS=$(OBJDIR)/sidecart_c2p.o $(OBJDIR)/sidecart_md.o $(OBJDIR)/sidecart_stubs.o
 OBJSTT=$(patsubst %.o,%.tt.o,$(filter-out $(SIDECART_OBJS),$(OBJS))) $(OBJDIR)/atari_vmode.tt.o
 
-all:	 $(DISTDIR)/$(TARGET) $(DISTDIR)/$(TARGETTT) # $(DISTDIR)/$(TARGET20) $(DISTDIR)/$(TARGET2F)
+all:	 $(DISTDIR)/$(TARGET) $(DISTDIR)/$(TARGETTT)
 
 stdoom: $(DISTDIR)/$(TARGET)
 ttdoom: $(DISTDIR)/$(TARGETTT)
@@ -165,16 +164,10 @@ ttdoom: $(DISTDIR)/$(TARGETTT)
 # dist/ also holds the WADs: remove only the programs built here
 clean:
 	rm -rf $(OBJDIR)
-	rm -f $(DISTDIR)/$(TARGET) $(DISTDIR)/$(TARGET20) $(DISTDIR)/$(TARGET2F) $(DISTDIR)/$(TARGETTT)
+	rm -f $(DISTDIR)/$(TARGET) $(DISTDIR)/$(TARGETTT)
 
 $(DISTDIR)/$(TARGET):	$(OBJS) | $(DISTDIR)
 	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDLIBS)
-
-$(DISTDIR)/$(TARGET20):	$(OBJS20) | $(DISTDIR)
-	$(CC) $(CFLAGS20) $(OBJS20) -o $@ $(LDLIBS20)
-
-$(DISTDIR)/$(TARGET2F):	$(OBJS2F) | $(DISTDIR)
-	$(CC) $(CFLAGS2F) $(OBJS2F) -o $@ $(LDLIBS2F)
 
 $(DISTDIR)/$(TARGETTT):	$(OBJSTT) | $(DISTDIR)
 	$(CC) $(CFLAGSTT) $(OBJSTT) -o $@ $(LDLIBSTT)
@@ -182,33 +175,17 @@ $(DISTDIR)/$(TARGETTT):	$(OBJSTT) | $(DISTDIR)
 $(OBJDIR)/%.tt.o:	%.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGSTT) -c $< -o $@
 
-$(OBJDIR)/%.2f.o:	%.c | $(OBJDIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS2F) -c $< -o $@
-
-$(OBJDIR)/%.20.o:	%.c | $(OBJDIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS20) -c $< -o $@
-
 $(OBJDIR)/%.o:	%.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-# Assembly stubs (.S, preprocessed) for the SidecarTridge protocol. Pure 68000,
-# CPU-agnostic, but per-variant rules keep the OBJS20/OBJS2F derivation working.
-$(OBJDIR)/%.2f.o:	%.S | $(OBJDIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS2F) -c $< -o $@
-
-$(OBJDIR)/%.20.o:	%.S | $(OBJDIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS20) -c $< -o $@
-
+# Assembly stubs (.S, preprocessed) for the SidecarTridge protocol: STDOOM only
 $(OBJDIR)/%.o:	%.S | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-# Rule for compiling to assembly on demand
-$(OBJDIR)/%.2f.s: %.c | $(OBJDIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS2F) -c $< -S -fverbose-asm -o $@
+# Assembly listings on demand, e.g. stcmd make build/r_draw.tt.s
+$(OBJDIR)/%.tt.s: %.c | $(OBJDIR)
+	$(CC) $(CPPFLAGS) $(CFLAGSTT) -c $< -S -fverbose-asm -o $@
 
-$(OBJDIR)/%.20.s: %.c | $(OBJDIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS20) -c $< -S -fverbose-asm -o $@
-	
 $(OBJDIR)/%.s: %.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -S -fverbose-asm -o $@
 

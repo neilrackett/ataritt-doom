@@ -330,7 +330,9 @@ Anything that reads or publishes Xpad: read
 ## TTDOOM (TT / Falcon) — notes
 
 - **Build:** the `ttdoom` target in the root `Makefile` (`build/*.tt.o`,
-  `-m68020-60 -mtune=68030 -msoft-float -DTTDOOM -DSCREENHEIGHT=240`). The
+  `-m68020-60 -msoft-float -fomit-frame-pointer -DTTDOOM -DSCREENHEIGHT=240`;
+  no `-mtune=68030`, whose 64-bit multiplies for constant divides a 68060
+  traps, and which timed no faster on a 68030). The
   sidecart objects are left out; `sidecart_c2p.h` stubs the API under `TTDOOM`
   and `m_misc.c` keeps `render_mode`/`palette_gen` so a shared `doomrc.cfg`
   round-trips.
@@ -369,10 +371,16 @@ Anything that reads or publishes Xpad: read
   zoomed line is converted once. ~2.5x (TT) / ~4x (Falcon) faster than the
   old `movep` version under Hatari; bit-identical output.
 - **Span loop:** `R_DrawSpan`/`R_DrawSpanLow` have a hand-written loop for
-  68020+ (`__M68020__`, the ISA macro; `-mtune=68030` defines `__mc68030__`,
-  not `__mc68020__`): 10.5 instructions a pixel vs gcc's 14, bit-identical
+  68020+ (`__M68020__`, the ISA macro; a `-mtune` changes which `__mc680x0__`
+  are defined): 10.5 instructions a pixel vs gcc's 14, bit-identical
   (checked span by span against the C loop over a timedemo). The 68000 build
   keeps the C loop; its `R_DrawColumn`/`R_DrawSpan` machine code is unchanged.
+- **FixedMul:** on a 68020 to 68040 (`_CPU` cookie, `M_InitFixed` in
+  `main`) it is one 64-bit `muls.l`, bit-identical to the 68000's split
+  multiply (checked for 50 million products on the host and a million on
+  an emulated 68030). The 68060 lacks the 64-bit form and keeps the split.
+  TTDOOM is also built with `-fomit-frame-pointer`. Together +6-8% under
+  Hatari.
 - **Low detail (F5):** works in both binaries. `R_DrawColumnLow` shares
   `R_DrawColumn`'s asm (each pixel written twice); id's versions doubled the
   global `dc_x` (breaking the sprite loop) and `R_DrawSpanLow` counted after
