@@ -15,9 +15,9 @@ Welcome to TTDOOM: full screen, full colour DOOM on the Atari TT or Falcon, than
 - Atari TT or Falcon with at least 2MB RAM
 - 5MB hard drive space
 
-## How to play
+## Installation
 
-- Download `TTDOOM.TOS` and `DOOM1.WAD` from the [releases page](https://neilrackett.com/atarist/atarist-stdoom).
+- Download `TTDOOM.TOS` and `DOOM1.WAD` from the [releases page](https://neilrackett.com/atarist/ataritt-doom).
 - Copy them to your hard drive.
 - Run `TTDOOM.TOS`.
 

@@ -16,7 +16,7 @@ this directory is the RP2040 firmware.
 
 ## Installation
 
-1. Download the latest files from the [releases page](https://github.com/neilrackett/atarist-stdoom/releases).
+1. Download the latest files from the [releases page](https://github.com/neilrackett/ataritt-doom/releases).
 2. Copy the `.uf2` and `.json` files to the `/apps` folder of your SidecarT's microSD card.
 3. On the Booster screen, press ESC for the app list and select the DOOM Accelerator app.
 4. To return to Booster, turn on your ST while holding the SELECT button on your SidecarT.
@@ -54,7 +54,7 @@ Each dither mode combines with any palette.
 ## Building
 
 The firmware builds against the Raspberry Pi Pico SDK + Pico Extras, registered
-as git submodules of the `atarist-stdoom` repo at `sidecart/pico-sdk` and
+as git submodules of the `ataritt-doom` repo at `sidecart/pico-sdk` and
 `sidecart/pico-extras`.
 
 From the repo root:

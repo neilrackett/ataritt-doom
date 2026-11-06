@@ -1,7 +1,7 @@
 {
   "uuid": "<APP_UUID>",
   "name": "DOOM Accelerator",
-  "description": "The DOOM Accelerator is designed to harness the power of your SidecarTridge Multi-device into a coprocessor that can make DOOM truly playable on a stock Atari ST. For more information, visit <a href=\"https://github.com/neilrackett/atarist-stdoom\">https://github.com/neilrackett/atarist-stdoom</a>.",
+  "description": "The DOOM Accelerator is designed to harness the power of your SidecarTridge Multi-device into a coprocessor that can make DOOM truly playable on a stock Atari ST. For more information, visit <a href=\"https://github.com/neilrackett/ataritt-doom\">https://github.com/neilrackett/ataritt-doom</a>.",
   "image": "https://atarist.neilrackett.com/<APP_UUID>.png",
   "tags": [
     "Doom",

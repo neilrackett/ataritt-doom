@@ -7,7 +7,7 @@ cd ..
 PROJECT_ROOT=$PWD
 
 # Install the SDKs needed for building. They are registered as git submodules
-# in the atarist-stdoom repo at sidecart/pico-sdk and sidecart/pico-extras.
+# in the ataritt-doom repo at sidecart/pico-sdk and sidecart/pico-extras.
 # MD/STDOOM only needs the Pico SDK + Pico Extras — JerryScript and FatFS were
 # dropped along with the network/JS stack. Submodule paths are resolved from
 # the git toplevel, so update from there.
