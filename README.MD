@@ -8,7 +8,7 @@ and Falcon, by [Neil Rackett](https://neilrackett.com/atarist)
 
 ## Introduction
 
-Welcome to TTDOOM: full screen, full colour DOOM on the Atari TT or Falcon, thanks to an optimised 68030 rendering pipeline that enables it to run at close to original speed at 320x240 in 256 colours.
+Welcome to TTDOOM: full screen, full colour DOOM on the Atari TT or Falcon, with an optimised 68030 rendering pipeline that enables it to run at closer to original speed at 320x240 in 256 colours.
 
 ## System requirements
 
