@@ -372,6 +372,16 @@ Anything that reads or publishes Xpad: read
   stride (320/384) and copy count (lines doubled on TT, zoom repeats), so a
   zoomed line is converted once. ~2.5x (TT) / ~4x (Falcon) faster than the
   old `movep` version under Hatari; bit-identical output.
+- **Box C2P (unzoomed):** `c2p8_box1`/`c2p8_box2` (one or two scanlines a
+  row, top-level asm after STDL's SDL2 add-on): a box of rows is one call.
+  The 68030 holds one write to ST-RAM while it works on and a second waits,
+  so each group's planes are parked in a3-a6 and stored among the next
+  group's merges; a row's last group is stored during the next row's
+  first. Each loop must fit the 256-byte instruction cache at any
+  alignment, at most 240 bytes: the TTDOOM link checks it with `nm`
+  (`C2P_CACHE_CHECK`). Under Hatari +3-5% on the TT, +2-3% on the Falcon;
+  every page of a timedemo identical to the per-row loops' (TT, Falcon VGA
+  and RGB, sizes 9 and 10).
 - **Span loop:** `R_DrawSpan`/`R_DrawSpanLow` have a hand-written loop for
   68020+ (`__M68020__`, the ISA macro; a `-mtune` changes which `__mc680x0__`
   are defined): 10.5 instructions a pixel vs gcc's 14, bit-identical
@@ -429,7 +439,30 @@ TT Low for testing `STDOOM.TOS`'s 8-plane path. Over the command FIFO,
 `hatari-event keypress 1` is the "1" key: give single-digit scancodes in hex
 (`0x01` is Esc). Frame checksums differ by a few sprite-edge pixels between
 any two builds (layout-dependent reads), so compare renderer changes within
-one binary, not across builds.
+one binary, not across builds. The same goes for C2P changes: convert each
+frame with both versions in one binary (onto a copy of the page) and
+compare. Run at most 6 Hatari instances at a time, with
+`--confirm-quit false`.
+
+### Possible follow-ups (TTDOOM)
+
+- **Time on real hardware.** Everything above was measured in Hatari, whose
+  68030 timing is approximate. A real Falcon refills its instruction cache
+  from ST-RAM over a 16-bit bus, so the box C2P's cache fit may count for
+  more there.
+- **Spread the zoomed views' stores.** `C2P8_MERGE_FN` (sizes 3-5) still
+  stores 2, 4 or 8 copies of each group in one burst. With more stores than
+  merges, measure whether spreading still pays.
+- **Low-detail pair C2P.** In low detail each pixel pair is identical, so a
+  group has 8 distinct pixels. A host search found 48 instructions a group
+  instead of 66 (gather a/c and b/d with `$FF00FF00`, transpose the 64
+  bits in two registers, then double every bit): ~5 ms a frame on the TT
+  before the box C2P. With stores now hidden behind the merges, the
+  arithmetic is a bigger share, so it may be worth more. It is valid only
+  where pairs are identical: rows in `playdirtybox` (HUD messages, the
+  pause sign, wipes) need the full C2P. It would be a new box loop.
+- **Unexplored on the Falcon:** the 16-bit true-colour mode (no C2P, but
+  twice the bytes over the slow bus) and the DSP.
 
 ## Reference projects (siblings of this repo)
 

@@ -169,7 +169,17 @@ clean:
 $(DISTDIR)/$(TARGET):	$(OBJS) | $(DISTDIR)
 	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDLIBS)
 
+# The 8-plane box C2P's loops must fit the 68030's 256-byte instruction
+# cache at any alignment: at most 240 bytes from _NAME_cache0 to
+# _NAME_cache1 (atari_c2p.c). The assembler cannot check it itself.
+C2P_CACHE_CHECK = m68k-atari-mint-nm -t d $(1) | awk \
+	'/_cache0$$/ { a[substr($$3, 1, length($$3) - 7)] = $$1 } \
+	 /_cache1$$/ { n = substr($$3, 1, length($$3) - 7); s = $$1 - a[n]; \
+	   if (s > 240) { print "*** " n ": " s " bytes, over 240"; bad = 1 } } \
+	 END { exit bad }'
+
 $(DISTDIR)/$(TARGETTT):	$(OBJSTT) | $(DISTDIR)
+	@$(call C2P_CACHE_CHECK,$(OBJDIR)/atari_c2p.tt.o)
 	$(CC) $(CFLAGSTT) $(OBJSTT) -o $@ $(LDLIBSTT)
 
 $(OBJDIR)/%.tt.o:	%.c | $(OBJDIR)

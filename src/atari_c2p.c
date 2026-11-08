@@ -7434,7 +7434,7 @@ static void c2p_1x_hirez(register unsigned char *out, const unsigned char *in, u
 static void c2p_screen_midrez(unsigned char *out, const unsigned char *in);
 static void c2p_screen_hirez(unsigned char *out, const unsigned char *in);
 static void c2p_screen_8bpp(unsigned char *out, const unsigned char *in);
-static void c2p8_320x1(unsigned char *out, const unsigned char *in, unsigned short pixels);
+static void c2p8_box(unsigned char *out, const unsigned char *in, short in_pitch, short pixels, short rows);
 static void c2p8_320x2(unsigned char *out, const unsigned char *in, unsigned short pixels);
 static void c2p8_320x4(unsigned char *out, const unsigned char *in, unsigned short pixels);
 static void c2p8_320x8(unsigned char *out, const unsigned char *in, unsigned short pixels);
@@ -7449,13 +7449,14 @@ static void c2p8_384x4(unsigned char *out, const unsigned char *in, unsigned sho
 #define ZOOM4X_Y		(ZOOM_PLAY_HEIGHT * 3 / 8)
 
 // 8-plane (TT Low / Falcon 8-bit) screen geometry, set by init_c2p_8bpp():
-// bytes from one picture line to the next, and the converters writing one
-// chunky line to 1, 2 or 4 picture lines (zoomed views convert each source
-// line once; on the TT each picture line is two scanlines).
+// bytes from one picture line to the next, whether a picture line is two
+// scanlines (TT Low), and the converters writing one chunky line to 2 or 4
+// picture lines (zoomed views convert each source line once).
 static unsigned short c2p8_stride = 640;
+static boolean c2p8_two_lines = true;
 
 typedef void (*c2p8_func)(unsigned char *out, const unsigned char *in, unsigned short pixels);
-static c2p8_func c2p8_line, c2p8_line2, c2p8_line4;
+static c2p8_func c2p8_line2, c2p8_line4;
 // A zoomed line, widened: long-aligned, as the C2P reads it by the long
 static uint32_t c2p8_wide[SCREENWIDTH / 4];
 
@@ -7502,12 +7503,7 @@ static void c2p_rect_8bpp(unsigned char *out, const unsigned char *in, short y_b
     // 8 planes: one byte per pixel across a 16-pixel group
     out += y_begin * c2p8_stride + x_begin;
     in += y_begin * SCREENWIDTH + x_begin;
-    for (int line = y_begin; line < y_end; line++)
-    {
-        c2p8_line(out, in, x_end - x_begin);
-        out += c2p8_stride;
-        in += SCREENWIDTH;
-    }
+    c2p8_box(out, in, SCREENWIDTH, x_end - x_begin, y_end - y_begin);
 }
 
 void init_c2p_table()
@@ -7668,6 +7664,7 @@ void init_c2p_table()
 void init_c2p_8bpp(unsigned short stride, int falcon)
 {
     c2p8_stride = stride;
+    c2p8_two_lines = !falcon;
     c2p_screen_drawfunc = c2p_screen_8bpp;
     c2p_statusbar_drawfunc = c2p_rect_8bpp;
     if (falcon)
@@ -7684,21 +7681,18 @@ void init_c2p_8bpp(unsigned short stride, int falcon)
     if (!falcon)
     {
         // TT Low: two 320-byte scanlines a picture line
-        c2p8_line = c2p8_320x2;
         c2p8_line2 = c2p8_320x4;
         c2p8_line4 = c2p8_320x8;
     }
     else if (stride == 384)
     {
-        // Falcon RGB / TV overscan (one line has no scanline stride)
-        c2p8_line = c2p8_320x1;
+        // Falcon RGB / TV overscan
         c2p8_line2 = c2p8_384x2;
         c2p8_line4 = c2p8_384x4;
     }
     else
     {
         // Falcon VGA, the VIDEL doubling lines
-        c2p8_line = c2p8_320x1;
         c2p8_line2 = c2p8_320x2;
         c2p8_line4 = c2p8_320x4;
     }
@@ -7878,10 +7872,11 @@ static void c2p_1x_hirez(register unsigned char *out, const unsigned char *in, u
 // - no table, and long rather than byte (movep) writes, which matters most
 // on the Falcon's 16-bit bus. Roles a=d2 b=d0 c=d3 d=d1 leave the plane words
 // in d0-d3 in memory order for movem. The same group is stored to COPIES
-// scanlines SCAN bytes apart: TT Low cannot double lines (480 of them), and
-// zoomed views repeat each line. Checked bit-for-bit against a plain C
-// reference, and about 2.5x (TT) / 4x (Falcon) faster than the movep version
-// it replaced, under Hatari.
+// scanlines SCAN bytes apart: zoomed views repeat each line (on TT Low, which
+// cannot double lines, each picture line twice over). Checked bit-for-bit
+// against a plain C reference, and about 2.5x (TT) / 4x (Falcon) faster than
+// the movep version it replaced, under Hatari. Unzoomed views go through
+// c2p8_box below.
 #define C2P8_MERGE_FN(NAME, SCAN, COPIES) \
 static void NAME(unsigned char *out, const unsigned char *in, unsigned short pixels) \
 { \
@@ -7982,12 +7977,165 @@ static void NAME(unsigned char *out, const unsigned char *in, unsigned short pix
         : "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "memory", "cc"); \
 }
 
-C2P8_MERGE_FN(c2p8_320x1, 320, 1)
 C2P8_MERGE_FN(c2p8_320x2, 320, 2)
 C2P8_MERGE_FN(c2p8_320x4, 320, 4)
 C2P8_MERGE_FN(c2p8_320x8, 320, 8)
 C2P8_MERGE_FN(c2p8_384x2, 384, 2)
 C2P8_MERGE_FN(c2p8_384x4, 384, 4)
+
+// The unzoomed 8-plane C2P: a box of rows in one call, with the stores
+// spread among the merges (after STDL's SDL2 add-on, c2p_asm.h). The 68030
+// holds one write to ST-RAM while it works on, and a second write waits for
+// the first, so stores made together stall. Each group's four plane longs
+// are parked in a3-a6 and stored during the next group's merges: one store
+// after every second merge for one line a row, one per merge for two lines
+// (TT Low). The merges are C2P8_MERGE_FN's, in another order with d0-d3
+// loaded in turn; the 16-bit exchange moves the words so that a3-a6 come
+// out in screen order. Checked bit for bit against C2P8_MERGE_FN.
+//
+// The pipeline carries from row to row: a row's last group is stored
+// during the next row's first, so the loop is left twice a row. With d6's
+// high word 0 the group was a row's first: a1 (and a2) move on by CORR, and
+// the row's other groups run with the high word set (GM2), so that the next
+// exit is the row's end. The box's first stores, of nothing, go to 16 bytes
+// of scratch. The loop, from _NAME_cache0 to _NAME_cache1, must fit the
+// 68030's 256-byte instruction cache at any alignment: at most 240 bytes
+// (the assembler cannot check it across forward branches; nm can).
+//
+// Arguments on the stack, past a 32-byte frame, eleven registers and the
+// return: src 80(sp), src pitch 84, dst 88, dst pitch (a scanline) 92,
+// groups 96 (at least 1), rows 100 (at least 1). The frame: scratch 0-15,
+// SKIPS 16 (a row's end to the next row's source), DSKIP 20 (the same for
+// the destination), CORR 24 (a1's move after a row's first group: from the
+// scratch for the first row, DSKIP after), GM2 28 (groups - 2 with the
+// high word set, or 0 for a box one group wide).
+void c2p8_box1(const unsigned char *src, long src_pitch, unsigned char *dst, long dst_pitch, long groups, long rows);
+void c2p8_box2(const unsigned char *src, long src_pitch, unsigned char *dst, long dst_pitch, long groups, long rows);
+
+#define C2P8B_M(sh, back, ra, rb, mask) \
+    "	move.l	" rb ",%d7\n" \
+    "	lsr.l	#" #sh ",%d7\n" \
+    "	eor.l	" ra ",%d7\n" \
+    "	and.l	" mask ",%d7\n" \
+    "	eor.l	%d7," ra "\n" \
+    "	" back "\n" \
+    "	eor.l	%d7," rb "\n"
+// ra = (A, B), rb = (C, D) by words: ra = (C, A), rb = (D, B)
+#define C2P8B_W(ra, rb) \
+    "	swap	" rb "\n" \
+    "	move.w	" rb ",%d7\n" \
+    "	move.w	" ra "," rb "\n" \
+    "	move.w	%d7," ra "\n" \
+    "	swap	" ra "\n"
+// Masks 0x0F0F0F0F in d4 and 0x00FF00FF in d5, the other two immediate
+#define C2P8B_GROUP(S1, S2, S3, S4, S5, S6, S7, S8) \
+    "	move.l	(%a0)+,%d0\n" \
+    "	move.l	(%a0)+,%d1\n" \
+    "	move.l	(%a0)+,%d2\n" \
+    "	move.l	(%a0)+,%d3\n" \
+    C2P8B_M(4, "lsl.l	#4,%d7", "%d0", "%d1", "%d4") S1 \
+    C2P8B_M(4, "lsl.l	#4,%d7", "%d2", "%d3", "%d4") S2 \
+    C2P8B_M(8, "lsl.l	#8,%d7", "%d0", "%d2", "%d5") S3 \
+    C2P8B_M(8, "lsl.l	#8,%d7", "%d1", "%d3", "%d5") S4 \
+    C2P8B_M(1, "add.l	%d7,%d7", "%d0", "%d2", "#0x55555555") S5 \
+    C2P8B_M(1, "add.l	%d7,%d7", "%d1", "%d3", "#0x55555555") S6 \
+    C2P8B_W("%d0", "%d2") S7 \
+    C2P8B_W("%d1", "%d3") S8 \
+    C2P8B_M(2, "lsl.l	#2,%d7", "%d0", "%d2", "#0x33333333") \
+    C2P8B_M(2, "lsl.l	#2,%d7", "%d1", "%d3", "#0x33333333") \
+    "	move.l	%d3,%a3\n" \
+    "	move.l	%d1,%a4\n" \
+    "	move.l	%d2,%a5\n" \
+    "	move.l	%d0,%a6\n"
+#define C2P8B_S1(r) "	move.l	" r ",(%a1)+\n"
+#define C2P8B_S2(r) "	move.l	" r ",(%a2)+\n"
+#define C2P8B_FUNC(name, G, DSTEP2, A2SET, A2FIX, DRAIN) \
+    "	.even\n" \
+    "	.globl	_" name "\n" \
+    "_" name ":\n" \
+    "	movem.l	%d2-%d7/%a2-%a6,-(%sp)\n" \
+    "	lea	-32(%sp),%sp\n" \
+    "	move.l	#0x0F0F0F0F,%d4\n" \
+    "	move.l	#0x00FF00FF,%d5\n" \
+    "	move.l	96(%sp),%d7\n" \
+    "	lsl.l	#4,%d7\n" \
+    "	move.l	84(%sp),%d0\n" \
+    "	sub.l	%d7,%d0\n" \
+    "	move.l	%d0,16(%sp)\n" \
+    "	move.l	92(%sp),%d0\n" \
+    DSTEP2 \
+    "	sub.l	%d7,%d0\n" \
+    "	move.l	%d0,20(%sp)\n" \
+    "	lea	16(%sp),%a1\n" \
+    "	move.l	88(%sp),%d0\n" \
+    "	sub.l	%a1,%d0\n" \
+    "	move.l	%d0,24(%sp)\n" \
+    "	move.l	96(%sp),%d0\n" \
+    "	subq.l	#2,%d0\n" \
+    "	bpl.s	5f\n" \
+    "	moveq	#0,%d0\n" \
+    "	bra.s	6f\n" \
+    "5:	or.l	#0xFFFF0000,%d0\n" \
+    "6:	move.l	%d0,28(%sp)\n" \
+    "	move.l	80(%sp),%a0\n" \
+    "	move.l	%sp,%a1\n" \
+    A2SET \
+    "	moveq	#0,%d6\n" \
+    "_" name "_cache0:\n" \
+    "1:\n" G \
+    "	dbra	%d6,1b\n" \
+    "	tst.l	%d6\n" \
+    "	bmi.s	4f\n" \
+    "	adda.l	24(%sp),%a1\n" \
+    A2FIX \
+    "	move.l	28(%sp),%d6\n" \
+    "	bne.w	1b\n" \
+    "4:	subq.l	#1,100(%sp)\n" \
+    "	beq.s	9f\n" \
+    "	adda.l	16(%sp),%a0\n" \
+    "	move.l	20(%sp),24(%sp)\n" \
+    "	moveq	#0,%d6\n" \
+    "	bra.w	1b\n" \
+    "_" name "_cache1:\n" \
+    "9:\n" DRAIN \
+    "	lea	32(%sp),%sp\n" \
+    "	movem.l	(%sp)+,%d2-%d7/%a2-%a6\n" \
+    "	rts\n"
+
+__asm__(
+    "	.text\n"
+    // One line a row: a store after every second merge
+    C2P8B_FUNC("c2p8_box1",
+               C2P8B_GROUP("", C2P8B_S1("%a3"), "", C2P8B_S1("%a4"),
+                           "", C2P8B_S1("%a5"), "", C2P8B_S1("%a6")),
+               "", "", "",
+               C2P8B_S1("%a3") C2P8B_S1("%a4") C2P8B_S1("%a5") C2P8B_S1("%a6"))
+    // Two lines a row (a2 the second): a store after every merge, and the
+    // rows two scanlines apart
+    C2P8B_FUNC("c2p8_box2",
+               C2P8B_GROUP(C2P8B_S1("%a3"), C2P8B_S2("%a3"),
+                           C2P8B_S1("%a4"), C2P8B_S2("%a4"),
+                           C2P8B_S1("%a5"), C2P8B_S2("%a5"),
+                           C2P8B_S1("%a6"), C2P8B_S2("%a6")),
+               "	add.l	%d0,%d0\n",
+               "	move.l	%sp,%a2\n",
+               "	move.l	%a1,%a2\n	adda.l	92(%sp),%a2\n",
+               C2P8B_S1("%a3") C2P8B_S2("%a3") C2P8B_S1("%a4") C2P8B_S2("%a4")
+               C2P8B_S1("%a5") C2P8B_S2("%a5") C2P8B_S1("%a6") C2P8B_S2("%a6")));
+
+// Rows of whole 16-pixel groups, in_pitch bytes apart in the source, to
+// picture lines c2p8_stride apart
+static void c2p8_box(unsigned char *out, const unsigned char *in, short in_pitch, short pixels, short rows)
+{
+    short groups = pixels >> 4;
+
+    if (groups <= 0 || rows <= 0)
+        return;
+    if (c2p8_two_lines)
+        c2p8_box2(in, in_pitch, out, c2p8_stride / 2, groups, rows);
+    else
+        c2p8_box1(in, in_pitch, out, c2p8_stride, groups, rows);
+}
 
 static void c2p_2x_lorez(register unsigned char *out, const unsigned char *in, unsigned short pixels, unsigned long table[][4])
 {
@@ -8401,8 +8549,8 @@ void draw_palette_table(unsigned char *st_screen)
         }
         if (is8bit)
         {
-            for (int i = 0; i < 8; i++)
-                c2p8_line(st_screen + c2p8_stride * (32 + y + i), buf, 128 + 16);
+            // The same buf on 8 rows
+            c2p8_box(st_screen + c2p8_stride * (32 + y), buf, 0, 128 + 16, 8);
         }
         else if (res == 0)
         {
@@ -8562,6 +8710,11 @@ static void c2p_view_8bpp(unsigned char *out, const unsigned char *in, short spl
     if (dx1 <= dx0)
         dy1 = 0;
 
+    // Lines with the same span go as one box
+    unsigned char *box_out = out;
+    const unsigned char *box_in = in;
+    short box_x0 = 0, box_x1 = 0, box_rows = 0;
+
     for (short line = 0; line < splitline; line++, out += c2p8_stride, in += SCREENWIDTH)
     {
         short x0 = SCREENWIDTH, x1 = 0;
@@ -8578,9 +8731,21 @@ static void c2p_view_8bpp(unsigned char *out, const unsigned char *in, short spl
             if (dx1 > x1)
                 x1 = dx1;
         }
-        if (x0 < x1)
-            c2p8_line(out + x0, in + x0, x1 - x0);
+        if (x0 >= x1)
+            x0 = x1 = 0;
+        if (x0 == box_x0 && x1 == box_x1)
+        {
+            box_rows++;
+            continue;
+        }
+        c2p8_box(box_out + box_x0, box_in + box_x0, SCREENWIDTH, box_x1 - box_x0, box_rows);
+        box_out = out;
+        box_in = in;
+        box_x0 = x0;
+        box_x1 = x1;
+        box_rows = 1;
     }
+    c2p8_box(box_out + box_x0, box_in + box_x0, SCREENWIDTH, box_x1 - box_x0, box_rows);
 }
 #endif
 
