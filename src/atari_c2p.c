@@ -8137,6 +8137,84 @@ static void c2p8_box(unsigned char *out, const unsigned char *in, short in_pitch
         c2p8_box1(in, in_pitch, out, c2p8_stride, groups, rows);
 }
 
+// Low detail: the 3D view is drawn in pixel pairs (each column, span,
+// sprite and fuzz pixel twice), so a 16-pixel group has 8 distinct pixels.
+// The pair box C2P gathers them into two registers (a with c's odd bytes,
+// b with d's: three instructions each), transposes those 64 bits with four
+// exchanges, and doubles each bit by exchanging a register with a copy of
+// itself: 56 instructions a group, where the box C2P takes 74, for the
+// same planes. The exchanges' roles and the order the four longs come out
+// in were found by simulating the instructions against a reference
+// conversion; checked bit for bit against c2p8_box1/2 on random paired
+// rows (tools/bench, -c2ptest) and by decoding pages of a timedemo
+// (pagecheck.py). Only for rows nothing else drew in (outside the dirty
+// box): HUD text, the pause sign and wipes are full resolution.
+void c2p8_pairbox1(const unsigned char *src, long src_pitch, unsigned char *dst, long dst_pitch, long groups, long rows);
+void c2p8_pairbox2(const unsigned char *src, long src_pitch, unsigned char *dst, long dst_pitch, long groups, long rows);
+
+// Each bit of z twice: z takes its even bits doubled, b its odd bits
+#define C2P8P_DOUBLE(z, b) \
+    "	move.l	" z ",%d7\n" \
+    "	lsr.l	#1,%d7\n" \
+    "	eor.l	" z ",%d7\n" \
+    "	and.l	#0x55555555,%d7\n" \
+    "	move.l	" z "," b "\n" \
+    "	eor.l	%d7," b "\n" \
+    "	add.l	%d7,%d7\n" \
+    "	eor.l	%d7," z "\n"
+// Masks 0x0F0F0F0F in d4 and 0x00FF00FF in d5, as C2P8B_GROUP
+#define C2P8P_GROUP(S1, S2, S3, S4, S5, S6, S7, S8) \
+    "	move.l	(%a0)+,%d0\n" \
+    "	move.l	(%a0)+,%d1\n" \
+    "	move.l	(%a0)+,%d2\n" \
+    "	move.l	(%a0)+,%d3\n" \
+    "	eor.l	%d0,%d2\n" \
+    "	and.l	%d5,%d2\n" \
+    "	eor.l	%d2,%d0\n" S1 \
+    "	eor.l	%d1,%d3\n" \
+    "	and.l	%d5,%d3\n" \
+    "	eor.l	%d3,%d1\n" S2 \
+    C2P8B_M(4, "lsl.l	#4,%d7", "%d0", "%d1", "%d4") S3 \
+    C2P8B_M(1, "add.l	%d7,%d7", "%d0", "%d1", "#0x55555555") S4 \
+    C2P8B_W("%d0", "%d1") S5 \
+    C2P8B_M(2, "lsl.l	#2,%d7", "%d0", "%d1", "#0x33333333") S6 \
+    C2P8P_DOUBLE("%d0", "%d2") S7 \
+    C2P8P_DOUBLE("%d1", "%d3") S8 \
+    "	move.l	%d1,%a3\n" \
+    "	move.l	%d0,%a4\n" \
+    "	move.l	%d3,%a5\n" \
+    "	move.l	%d2,%a6\n"
+
+__asm__(
+    "	.text\n"
+    C2P8B_FUNC("c2p8_pairbox1",
+               C2P8P_GROUP("", C2P8B_S1("%a3"), "", C2P8B_S1("%a4"),
+                           "", C2P8B_S1("%a5"), "", C2P8B_S1("%a6")),
+               "", "", "",
+               C2P8B_S1("%a3") C2P8B_S1("%a4") C2P8B_S1("%a5") C2P8B_S1("%a6"))
+    C2P8B_FUNC("c2p8_pairbox2",
+               C2P8P_GROUP(C2P8B_S1("%a3"), C2P8B_S2("%a3"),
+                           C2P8B_S1("%a4"), C2P8B_S2("%a4"),
+                           C2P8B_S1("%a5"), C2P8B_S2("%a5"),
+                           C2P8B_S1("%a6"), C2P8B_S2("%a6")),
+               "	add.l	%d0,%d0\n",
+               "	move.l	%sp,%a2\n",
+               "	move.l	%a1,%a2\n	adda.l	92(%sp),%a2\n",
+               C2P8B_S1("%a3") C2P8B_S2("%a3") C2P8B_S1("%a4") C2P8B_S2("%a4")
+               C2P8B_S1("%a5") C2P8B_S2("%a5") C2P8B_S1("%a6") C2P8B_S2("%a6")));
+
+static void c2p8_pairbox(unsigned char *out, const unsigned char *in, short in_pitch, short pixels, short rows)
+{
+    short groups = pixels >> 4;
+
+    if (groups <= 0 || rows <= 0)
+        return;
+    if (c2p8_two_lines)
+        c2p8_pairbox2(in, in_pitch, out, c2p8_stride / 2, groups, rows);
+    else
+        c2p8_pairbox1(in, in_pitch, out, c2p8_stride, groups, rows);
+}
+
 static void c2p_2x_lorez(register unsigned char *out, const unsigned char *in, unsigned short pixels, unsigned long table[][4])
 {
     if (pixels < 8)
@@ -8685,6 +8763,32 @@ void c2p_8bpp_set_dirty(const int *box)
     memcpy(c2p8_dirty, box, sizeof(c2p8_dirty));
 }
 
+// Low detail in play: the 3D view is in pixel pairs (c2p8_pairbox)
+static boolean c2p8_pairs(void)
+{
+    return detailshift && gamestate == GS_LEVEL && !menuactive
+        && !inhelpscreens && !automapactive;
+}
+
+// Rows y0 to y1 (exclusive) of the view, columns x0 to x1: the rows in the
+// dirty box by the box C2P, the rest in pairs
+static void c2p8_view_rows(unsigned char *out, const unsigned char *in, short y0, short y1, short x0, short x1)
+{
+    int dy0 = c2p8_dirty[BOXBOTTOM], dy1 = c2p8_dirty[BOXTOP] + 1;
+
+    if (dy0 < y0)
+        dy0 = y0;
+    if (dy1 > y1)
+        dy1 = y1;
+    if (dy1 <= dy0)
+        dy0 = dy1 = y1;
+    out += x0;
+    in += x0;
+    c2p8_pairbox(out + y0 * c2p8_stride, in + y0 * SCREENWIDTH, SCREENWIDTH, x1 - x0, dy0 - y0);
+    c2p8_box(out + dy0 * c2p8_stride, in + dy0 * SCREENWIDTH, SCREENWIDTH, x1 - x0, dy1 - dy0);
+    c2p8_pairbox(out + dy1 * c2p8_stride, in + dy1 * SCREENWIDTH, SCREENWIDTH, x1 - x0, y1 - dy1);
+}
+
 // A shrunk view (sizes 6-9): converts the view and whatever else changed in
 // the play area - the border when Doom redraws it, HUD messages and their
 // erasing, the pause sign, screen wipes, all of which mark the dirty box.
@@ -8710,19 +8814,24 @@ static void c2p_view_8bpp(unsigned char *out, const unsigned char *in, short spl
     if (dx1 <= dx0)
         dy1 = 0;
 
-    // Lines with the same span go as one box
+    // Lines with the same span go as one box. In low detail the view's
+    // lines outside the dirty box go in pairs (c2p8_pairbox).
     unsigned char *box_out = out;
     const unsigned char *box_in = in;
     short box_x0 = 0, box_x1 = 0, box_rows = 0;
+    boolean box_pairs = false;
+    boolean pairs = c2p8_pairs();
 
     for (short line = 0; line < splitline; line++, out += c2p8_stride, in += SCREENWIDTH)
     {
         short x0 = SCREENWIDTH, x1 = 0;
+        boolean line_pairs = false;
 
         if (line >= vy0 && line < vy1)
         {
             x0 = vx0;
             x1 = vx1;
+            line_pairs = pairs;
         }
         if (line >= dy0 && line < dy1)
         {
@@ -8730,22 +8839,30 @@ static void c2p_view_8bpp(unsigned char *out, const unsigned char *in, short spl
                 x0 = dx0;
             if (dx1 > x1)
                 x1 = dx1;
+            line_pairs = false;
         }
         if (x0 >= x1)
             x0 = x1 = 0;
-        if (x0 == box_x0 && x1 == box_x1)
+        if (x0 == box_x0 && x1 == box_x1 && line_pairs == box_pairs)
         {
             box_rows++;
             continue;
         }
-        c2p8_box(box_out + box_x0, box_in + box_x0, SCREENWIDTH, box_x1 - box_x0, box_rows);
+        if (box_pairs)
+            c2p8_pairbox(box_out + box_x0, box_in + box_x0, SCREENWIDTH, box_x1 - box_x0, box_rows);
+        else
+            c2p8_box(box_out + box_x0, box_in + box_x0, SCREENWIDTH, box_x1 - box_x0, box_rows);
         box_out = out;
         box_in = in;
         box_x0 = x0;
         box_x1 = x1;
+        box_pairs = line_pairs;
         box_rows = 1;
     }
-    c2p8_box(box_out + box_x0, box_in + box_x0, SCREENWIDTH, box_x1 - box_x0, box_rows);
+    if (box_pairs)
+        c2p8_pairbox(box_out + box_x0, box_in + box_x0, SCREENWIDTH, box_x1 - box_x0, box_rows);
+    else
+        c2p8_box(box_out + box_x0, box_in + box_x0, SCREENWIDTH, box_x1 - box_x0, box_rows);
 }
 #endif
 
@@ -8765,6 +8882,11 @@ static void c2p_screen_8bpp(unsigned char *out, const unsigned char *in)
     if (!zoom_allowed || scaledviewwidth > SCREENWIDTH / 2)
     {
         // Every line, full width
+#ifdef TTDOOM
+        if (zoom_allowed && c2p8_pairs())
+            c2p8_view_rows(out, in, 0, splitline, 0, SCREENWIDTH);
+        else
+#endif
         c2p_rect_8bpp(out, in, 0, splitline, 0, SCREENWIDTH);
     }
     else if (scaledviewwidth > SCREENWIDTH / 4)
