@@ -201,7 +201,7 @@ R_RenderMaskedSegRange
 }
 
 
-static int32_t divs(int32_t a, int16_t b) {
+static __attribute__((unused)) int32_t divs(int32_t a, int16_t b) {
 #ifdef USEASM
     register int32_t result = a;
     asm (
@@ -228,6 +228,247 @@ static int32_t divs(int32_t a, int16_t b) {
 #define HEIGHTBITS		12
 #define HEIGHTUNIT		(1<<HEIGHTBITS)
 
+#if defined(USEASM) && defined(__M68020__)
+// 68020+ (TTDOOM): the seg loop only notes each wall tier it finds
+// (segtiers); after it, R_DrawSegTiers fetches their columns and sets them
+// up as column records (R_SetupColumn), and R_DrawColumns draws those. The
+// loop, the fetch and set-up and the drawer in turn didn't fit the 68030's
+// 256-byte instruction cache: in three loops each mostly does (under
+// Hatari: walls 2-3 ms a frame faster in low detail, 4 in high). The loop's
+// state is in locals, where around the drawer calls gcc kept it in memory,
+// and each detail level has its own loop.
+static colrec_t		segcols[3*SCREENWIDTH];
+
+// A wall tier as the seg loop finds it, set up as a column afterwards
+typedef struct
+{
+    short		x;
+    short		yl;
+    short		yh;
+    short		tex;
+    fixed_t		texturecolumn;
+    fixed_t		texturemid;
+    lighttable_t*	colormap;
+    fixed_t		iscale;
+} segtier_t;
+
+static segtier_t	segtiers[3*SCREENWIDTH];
+
+// The seg's tiers t to end as columns, then drawn. A column points into a
+// cached lump, which fetching one that isn't cached can purge
+// (W_CacheLumpNum, Z_Malloc): the columns set up before such a fetch are
+// drawn first.
+static inline __attribute__((always_inline)) void
+R_DrawSegTiers (const segtier_t* t, const segtier_t* end, const int low)
+{
+    colrec_t*	c = segcols;
+    const byte*	source;
+
+    for ( ; t < end; t++)
+    {
+	source = R_GetCachedColumn (t->tex, t->texturecolumn);
+	if (!source)
+	{
+	    if (low)
+		R_DrawColumnsLow (segcols, c);
+	    else
+		R_DrawColumns (segcols, c);
+	    c = segcols;
+	    source = R_GetColumnSlow (t->tex, t->texturecolumn);
+	}
+	R_SetupColumn (c++, t->x, t->yl, t->yh, source, t->colormap,
+		       t->iscale, t->texturemid, low);
+    }
+    if (low)
+	R_DrawColumnsLow (segcols, c);
+    else
+	R_DrawColumns (segcols, c);
+}
+
+#define SEG_TIER(tier_yl, tier_yh, tier_tex, tier_mid) \
+    { \
+	t->x = x; \
+	t->yl = tier_yl; \
+	t->yh = tier_yh; \
+	t->tex = tier_tex; \
+	t->texturecolumn = texturecolumn; \
+	t->texturemid = tier_mid; \
+	t->colormap = colormap; \
+	t->iscale = iscale; \
+	t++; \
+    }
+
+static inline __attribute__((always_inline)) void R_RenderSegLoopAt (const int low)
+{
+    angle_t		angle;
+    unsigned		index;
+    short		yl;
+    short		yh;
+    short		mid;
+    fixed_t		texturecolumn = 0;
+    short		top;
+    short		bottom;
+    lighttable_t*	colormap = NULL;
+    fixed_t		iscale = 0;
+    segtier_t*		t = segtiers;
+    int			x = rw_x;
+    const int		stopx = rw_stopx;
+    fixed_t		scale = rw_scale;
+    fixed_t		tfrac = topfrac;
+    fixed_t		bfrac = bottomfrac;
+    fixed_t		phigh = pixhigh;
+    fixed_t		plow = pixlow;
+
+    for ( ; x < stopx ; x++)
+    {
+	// mark floor / ceiling areas
+	yl = (tfrac+HEIGHTUNIT-1)>>HEIGHTBITS;
+
+	// no space above wall?
+	if (yl < ceilingclip[x]+1)
+	    yl = ceilingclip[x]+1;
+	
+	if (markceiling)
+	{
+	    top = ceilingclip[x]+1;
+	    bottom = yl-1;
+
+	    if (bottom >= floorclip[x])
+		bottom = floorclip[x]-1;
+
+	    if (top <= bottom)
+	    {
+		ceilingplane->top[x] = top;
+		ceilingplane->bottom[x] = bottom;
+	    }
+	}
+		
+	yh = bfrac>>HEIGHTBITS;
+
+	if (yh >= floorclip[x])
+	    yh = floorclip[x]-1;
+
+	if (markfloor)
+	{
+	    top = yh+1;
+	    bottom = floorclip[x]-1;
+	    if (top <= ceilingclip[x])
+		top = ceilingclip[x]+1;
+	    if (top <= bottom)
+	    {
+		floorplane->top[x] = top;
+		floorplane->bottom[x] = bottom;
+	    }
+	}
+	
+	// texturecolumn and lighting are independent of wall tiers
+	if (segtextured)
+	{
+	    // calculate texture offset
+	    angle = (rw_centerangle + xtoviewangle[x])>>ANGLETOFINESHIFT;
+	    texturecolumn = rw_offset-FixedMul(finetangent[angle],rw_distance);
+	    texturecolumn >>= FRACBITS;
+	    // calculate lighting
+	    index = LIGHT_INDEX(scale>>LIGHTSCALESHIFT);
+
+	    if (index >=  MAXLIGHTSCALE )
+		index = MAXLIGHTSCALE-1;
+
+	    colormap = walllights[index];
+	    iscale = 0xffffffffu / (unsigned)scale;
+	}
+	
+	// draw the wall tiers
+	if (midtexture)
+	{
+	    // single sided line
+	    if (yl <= yh)
+		SEG_TIER (yl, yh, midtexture, rw_midtexturemid);
+	    ceilingclip[x] = viewheight;
+	    floorclip[x] = -1;
+	}
+	else
+	{
+	    // two sided line
+	    if (toptexture)
+	    {
+		// top wall
+		mid = phigh>>HEIGHTBITS;
+		phigh += pixhighstep;
+
+		if (mid >= floorclip[x])
+		    mid = floorclip[x]-1;
+
+		if (mid >= yl)
+		{
+		    SEG_TIER (yl, mid, toptexture, rw_toptexturemid);
+		    ceilingclip[x] = mid;
+		}
+		else
+		    ceilingclip[x] = yl-1;
+	    }
+	    else
+	    {
+		// no top wall
+		if (markceiling)
+		    ceilingclip[x] = yl-1;
+	    }
+			
+	    if (bottomtexture)
+	    {
+		// bottom wall
+		mid = (plow+HEIGHTUNIT-1)>>HEIGHTBITS;
+		plow += pixlowstep;
+
+		// no space above wall?
+		if (mid <= ceilingclip[x])
+		    mid = ceilingclip[x]+1;
+		
+		if (mid <= yh)
+		{
+		    SEG_TIER (mid, yh, bottomtexture, rw_bottomtexturemid);
+		    floorclip[x] = mid;
+		}
+		else
+		    floorclip[x] = yh+1;
+	    }
+	    else
+	    {
+		// no bottom wall
+		if (markfloor)
+		    floorclip[x] = yh+1;
+	    }
+			
+	    if (maskedtexture)
+	    {
+		// save texturecol
+		//  for backdrawing of masked mid texture
+		maskedtexturecol[x] = texturecolumn;
+	    }
+	}
+		
+	scale += rw_scalestep;
+	tfrac += topstep;
+	bfrac += bottomstep;
+    }
+    rw_x = x;
+    rw_scale = scale;
+    topfrac = tfrac;
+    bottomfrac = bfrac;
+    pixhigh = phigh;
+    pixlow = plow;
+
+    R_DrawSegTiers (segtiers, t, low);
+}
+
+void R_RenderSegLoop (void)
+{
+    if (detailshift)
+	R_RenderSegLoopAt (1);
+    else
+	R_RenderSegLoopAt (0);
+}
+#else
 void R_RenderSegLoop (void)
 {
     angle_t		angle;
@@ -391,6 +632,7 @@ void R_RenderSegLoop (void)
 	bottomfrac += bottomstep;
     }
 }
+#endif
 
 
 

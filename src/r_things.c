@@ -418,7 +418,8 @@ R_DrawVisSprite
     }
     else if (vis->mobjflags & MF_TRANSLATION)
     {
-	colfunc = R_DrawTranslatedColumn;
+	// (id's R_DrawTranslatedColumn: in low detail at an undoubled x)
+	colfunc = transcolfunc;
 	dc_translation = translationtables - 256 +
 	    ( (vis->mobjflags & MF_TRANSLATION) >> (MF_TRANSSHIFT-8) );
     }

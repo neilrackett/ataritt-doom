@@ -105,7 +105,7 @@ int			dccount;
 /// @brief Converts a Q15.16 fixed-point value into a Q7.8 value that fits in a short
 /// @param n the Q15.16 value to convert
 /// @return a a short in Q7.8 format
-static short reduce(fixed_t n)
+static __attribute__((unused)) short reduce(fixed_t n)
 {
     return (n >> 8) & 0xffff;
 }
@@ -113,7 +113,7 @@ static short reduce(fixed_t n)
 /// @brief Converts a Q7.8 value into an inverted 8.0Q6 representation where the integral part is after the fractional part.
 /// @param n the Q7.8 value to convert
 /// @return a short in 8.0Q6 format
-static short to_8_0Q6(short n)
+static __attribute__((unused)) short to_8_0Q6(short n)
 {
     return (n << 8) | ((n >> 8) & 0x007f);
 }
@@ -125,9 +125,84 @@ static short to_8_0Q6(short n)
 // Thus a special case loop for very fast rendering can
 //  be used. It has also been used with Wolfenstein 3D.
 // 
+#if defined(USEASM) && defined(__M68020__)
+// 68020+ (TTDOOM): vanilla's 16.16 texture step in four instructions a
+// pixel, from a column R_SetupColumn (r_draw.h) set up. pos keeps the
+// fraction in the high word and the 7-bit texel row in the low word, which
+// indexes the column directly. addx.l steps both halves at once: the
+// fraction's carry out of bit 31 goes to X, and the next pixel's addx adds
+// it to the row. Nothing else in the loop touches X, and X starts as the
+// first step's carry with the fraction already one step on, so every row is
+// vanilla's (frac >> 16) & 127 exactly. The row is kept to 7 bits (and.w),
+// with the row step taken mod 128, so the low word never carries into the
+// fraction. Low detail draws each texel to two pixels with one word store,
+// from the word colormaps.
+static inline __attribute__((always_inline)) void
+R_DrawColumnRec (const colrec_t* c, const int low)
+{
+    unsigned	pos = c->pos;
+    // The CCR to start with, and then each texel: below 32, so its high
+    // bits are clear for the texel's use as an index
+    unsigned	texel = (unsigned short)c->ccr;
+    short	pairs = c->pairs;
+    byte*	dest = c->dest;
+
+    asm volatile (
+	"move.w	%[texel],%%ccr			\n\t"
+	"bne.s	1f				\n\t" // odd: the second
+	"0:					\n\t"
+	"move.b	(%[src],%[pos].w),%[texel]	\n\t"
+	"addx.l	%[step],%[pos]			\n\t"
+	"and.w	%[mask],%[pos]			\n\t"
+	".if %c[low]				\n\t"
+	"move.w	(%[cmap],%[texel].w*2),(%[dest])	\n\t"
+	".else					\n\t"
+	"move.b	(%[cmap],%[texel].w),(%[dest])	\n\t"
+	".endif					\n\t"
+	"1:					\n\t"
+	"move.b	(%[src],%[pos].w),%[texel]	\n\t"
+	"addx.l	%[step],%[pos]			\n\t"
+	"and.w	%[mask],%[pos]			\n\t"
+	".if %c[low]				\n\t"
+	"move.w	(%[cmap],%[texel].w*2),%c[width](%[dest])	\n\t"
+	".else					\n\t"
+	"move.b	(%[cmap],%[texel].w),%c[width](%[dest])	\n\t"
+	".endif					\n\t"
+	"lea	(2*%c[width])(%[dest]),%[dest]	\n\t"
+	"dbra	%[pairs],0b			\n\t"
+	: [pos] "+d" (pos), [texel] "+d" (texel), [dest] "+a" (dest),
+	  [pairs] "+d" (pairs)
+	: [src] "a" (c->source), [cmap] "a" (c->cmap),
+	  [step] "d" (c->step), [mask] "d" (127),
+	  [width] "i" (SCREENWIDTH), [low] "i" (low)
+	: "cc", "memory");
+}
+
+static inline __attribute__((always_inline)) void R_DrawColumnAt (const int low)
+{
+    colrec_t	c;
+
+    if (dc_yh < dc_yl)
+	return;
+    R_SetupColumn (&c, dc_x, dc_yl, dc_yh, dc_source, dc_colormap,
+		   dc_iscale, dc_texturemid, low);
+    R_DrawColumnRec (&c, low);
+}
+
+void R_DrawColumns (const colrec_t* c, const colrec_t* end)
+{
+    for ( ; c < end; c++)
+	R_DrawColumnRec (c, 0);
+}
+
+void R_DrawColumnsLow (const colrec_t* c, const colrec_t* end)
+{
+    for ( ; c < end; c++)
+	R_DrawColumnRec (c, 1);
+}
+#else
 // The column loop for R_DrawColumn and R_DrawColumnLow: low detail view
-// columns are two screen columns wide, so it draws each pixel twice (on a
-// 68020+ with one word store, from the word colormaps).
+// columns are two screen columns wide, so it draws each pixel twice.
 static inline __attribute__((always_inline)) void R_DrawColumnAt (const int low)
 { 
     short		count; 
@@ -265,6 +340,7 @@ static inline __attribute__((always_inline)) void R_DrawColumnAt (const int low)
     } while (count--); 
 #endif
 }
+#endif
 
 void R_DrawColumn (void) 
 { 
@@ -370,6 +446,73 @@ short	fuzzpos = 0;
 //  could create the SHADOW effect,
 //  i.e. spectres and invisible players.
 //
+#if defined(USEASM) && defined(__M68020__)
+// 68020+ (TTDOOM): fuzzoffset repeated, so that a column of up to
+// SCREENHEIGHT pixels starting anywhere in the table reads on without
+// wrapping, and the drawer needs no test a pixel.
+static short	fuzzoffsetx[FUZZTABLE + SCREENHEIGHT];
+
+// R_DrawFuzzColumn and R_DrawFuzzColumnLow, in asm: five instructions a
+// pixel (seven in low detail, where each of the two screen columns takes
+// its own neighbour's pixel). The same pixels as the C loops.
+static inline __attribute__((always_inline)) void R_DrawFuzzColumnAt (const int low)
+{
+    short		count;
+    short		pos;
+    byte*		dest;
+    const short*	ofs;
+    unsigned		texel = 0;	// high bits clear: an index
+    short		o;
+
+    // Adjust borders, as vanilla
+    if (!dc_yl)
+	dc_yl = 1;
+    if (dc_yh == viewheight-1)
+	dc_yh = viewheight - 2;
+    count = dc_yh - dc_yl;
+    if (count < 0)
+	return;
+
+    if (!fuzzoffsetx[0])
+    {
+	for (pos = 0; pos < FUZZTABLE + SCREENHEIGHT; pos++)
+	    fuzzoffsetx[pos] = fuzzoffset[pos % FUZZTABLE];
+    }
+    dest = ylookup[dc_yl] + columnofs[low ? dc_x << 1 : dc_x];
+    ofs = fuzzoffsetx + fuzzpos;
+    // Use colormap #6 so the color gets a little darker.
+    asm volatile (
+	"0:					\n\t"
+	"move.w	(%[ofs])+,%[o]			\n\t"
+	"move.b	(%[dest],%[o].w),%[texel]	\n\t"
+	"move.b	(%[cmap],%[texel].w),(%[dest])	\n\t"
+	".if %c[low]				\n\t"
+	"move.b	1(%[dest],%[o].w),%[texel]	\n\t"
+	"move.b	(%[cmap],%[texel].w),1(%[dest])	\n\t"
+	".endif					\n\t"
+	"lea	%c[width](%[dest]),%[dest]	\n\t"
+	"dbra	%[count],0b			\n\t"
+	: [ofs] "+a" (ofs), [dest] "+a" (dest), [texel] "+d" (texel),
+	  [o] "=&d" (o), [count] "+d" (count)
+	: [cmap] "a" (colormaps + 6*256),
+	  [width] "i" (SCREENWIDTH), [low] "i" (low)
+	: "cc", "memory");
+    pos = ofs - fuzzoffsetx;
+    while (pos >= FUZZTABLE)
+	pos -= FUZZTABLE;
+    fuzzpos = pos;
+}
+
+void R_DrawFuzzColumn (void)
+{
+    R_DrawFuzzColumnAt (0);
+}
+
+void R_DrawFuzzColumnLow (void)
+{
+    R_DrawFuzzColumnAt (1);
+}
+#else
 void R_DrawFuzzColumn (void) 
 { 
     short		count; 
@@ -476,6 +619,7 @@ void R_DrawFuzzColumnLow (void)
     } while (count--);
     fuzzpos = pos;
 } 
+#endif
  
   
  
@@ -652,7 +796,7 @@ typedef unsigned int fixed_2in1_t;
 // Poor man's SIMD:
 // Pack xfrac and yfrac as 6.9 fixedpoint numbers into a single 32 bit integer:
 // XXXXXXxx xxxxxxx0 YYYYYYyy yyyyyy0
-static fixed_2in1_t pack(unsigned int a, unsigned int b)
+static __attribute__((unused)) fixed_2in1_t pack(unsigned int a, unsigned int b)
 {
     return ((a & 0x003fff80) << 10) | ((b & 0x003fff80) >> 6);
 }
@@ -664,67 +808,99 @@ unsigned short rotl16 (unsigned short value, unsigned int count) {
 //
 // Draws the actual span.
 #if defined(USEASM) && defined(__M68020__)
-// 68020+ (TTDOOM): the loop below by hand, bit-identical. gcc reloads the
-// shift count and uses immediate masks in the loop (14 instructions a
-// pixel); this keeps the masks in registers, takes x with a rotate instead
-// of a 26-bit shift, needs no zero-extend of the texel (d5 stays clear) and
-// draws two pixels an iteration: 10.5 instructions a pixel. Low detail
-// (R_DrawSpanLow) writes each texel to two pixels with one word store, from
-// the word colormaps.
+// 68020+ (TTDOOM): 7.5 instructions a pixel (after Aki Laukkanen's span for
+// ADoom). x (u) and y (v) are 16.16 as in vanilla, but split across two
+// registers with the fractions crossed over (R_SetupSpan, r_draw.h):
+//   u = v fraction : u texel (bits 5-0)
+//   v = u fraction : v texel * 64 (bits 11-6)
+// addx.l steps a register's fraction and texel together; the fraction's
+// carry goes to X, and the other register's addx adds it to its own
+// texel's low bit. So the two addx.l chain one X flag between u and v,
+// nothing else in the loop touches X, and X starts as v's first carry (v's
+// fraction is already one step on). or.w sets u's bits 15-6 and v's bits
+// 15-12 and 5-0: v's carry ripples through bits 5-0 into its texel, and
+// the and.w of the two is $f000 + v*64 + u, a texel of the flat 4096 bytes
+// on (src is the flat + $1000).
+// Steps are taken mod 64 per axis. Unlike vanilla, a row that wraps carries
+// into the other fraction's lowest bit (1/65536 of a texel); vanilla's 16
+// fraction bits otherwise, where the 68000 loop keeps 9. Low detail writes
+// each texel to two pixels with one word store, from the word colormaps.
 #define R_DRAWSPAN_PIXEL \
-        "move.l  %[frac],%%d1               \n\t" \
-        "and.l   %%d6,%%d1                  \n\t" /* x int 31-26, y int 15-10 */ \
-        "move.l  %%d1,%%d2                  \n\t" \
-        "lsr.w   #4,%%d1                    \n\t" /* y int to 11-6 */ \
-        "rol.l   #6,%%d2                    \n\t" /* x int to 5-0 */ \
-        "or.w    %%d2,%%d1                  \n\t" /* spot */ \
-        "move.b  (%[src],%%d1.w),%%d5       \n\t" \
+        "or.w    %%d6,%[u]                  \n\t" \
+        "or.w    %%d7,%[v]                  \n\t" \
+        "and.w   %[v],%[u]                  \n\t" /* $f000 + v*64 + u */ \
+        "addx.l  %[vstep],%[v]              \n\t" \
+        "move.b  (%[src],%[u].w),%%d5       \n\t" \
+        "addx.l  %[ustep],%[u]              \n\t" \
         ".if %c[low]                        \n\t" \
         "move.w  (%[cmap],%%d5.w*2),(%[dest])+ \n\t" \
         ".else                              \n\t" \
         "move.b  (%[cmap],%%d5.w),(%[dest])+ \n\t" \
-        ".endif                             \n\t" \
-        "add.l   %[step],%[frac]            \n\t" \
-        "and.l   %%d7,%[frac]               \n\t"
+        ".endif                             \n\t"
 
-static inline __attribute__((always_inline)) void R_DrawSpanAt (byte *dest, const int low)
+static inline __attribute__((always_inline)) void
+R_DrawSpanRec (const spanrec_t* r, const byte* source, const int low)
 {
-    unsigned short n = ds_x2 - ds_x1 + 1;   // texels
-    fixed_2in1_t frac = pack(ds_xfrac, ds_yfrac);
-    fixed_2in1_t step = pack(ds_xstep, ds_ystep);
+    unsigned	u = r->u;
+    unsigned	v = r->v;
+    byte*	dest = r->dest;
+    short	pairs = r->pairs;
+    // The CCR to start with, in d5, which then takes each texel: below 32,
+    // so its high bits are already clear for the texel's use as an index
+    register long ccr asm("d5") = (unsigned short)r->ccr;
 
     asm volatile (
-        "moveq   #0,%%d5                    \n\t"
-        "move.l  #0xfc00fc00,%%d6           \n\t"
-        "move.l  #0xfffefffe,%%d7           \n\t"
-        "lsr.w   #1,%[n]                    \n\t" // pairs; odd pixel to C
-        "bcc.s   1f                         \n\t"
+        "move.w  #0xffc0,%%d6               \n\t"
+        "move.w  #0xf03f,%%d7               \n\t"
+        "move.w  %%d5,%%ccr                 \n\t"
+        "beq.s   1f                         \n\t" // even: pairs only
         R_DRAWSPAN_PIXEL
         "1:                                 \n\t"
-        "subq.w  #1,%[n]                    \n\t"
+        "tst.w   %[pairs]                   \n\t"
         "bmi.s   3f                         \n\t"
         "2:                                 \n\t"
         R_DRAWSPAN_PIXEL
         R_DRAWSPAN_PIXEL
-        "dbra    %[n],2b                    \n\t"
+        "dbra    %[pairs],2b                \n\t"
         "3:                                 \n\t"
-        : [dest] "+a"(dest), [frac] "+d"(frac), [n] "+d"(n)
-        : [src] "a"(ds_source),
-          [cmap] "a"(low ? WORD_COLORMAP (ds_colormap) : ds_colormap),
-          [step] "d"(step),
+        : [dest] "+a"(dest), [u] "+d"(u), [v] "+d"(v), [pairs] "+d"(pairs),
+          "+d"(ccr)
+        : [src] "a"(source + 0x1000), [cmap] "a"(r->cmap),
+          [ustep] "d"(r->ustep), [vstep] "d"(r->vstep),
           [low] "i"(low)
-        : "d1", "d2", "d5", "d6", "d7", "cc", "memory");
+        : "d6", "d7", "cc", "memory");
+}
+
+static inline __attribute__((always_inline)) void R_DrawSpanAt (const int low)
+{
+    spanrec_t	r;
+
+    R_SetupSpan (&r, ds_y, ds_x1, ds_x2, ds_colormap,
+		 ds_xfrac, ds_yfrac, ds_xstep, ds_ystep, low);
+    R_DrawSpanRec (&r, ds_source, low);
+}
+
+void R_DrawSpans (const spanrec_t* r, const spanrec_t* end, const byte* source)
+{
+    for ( ; r < end; r++)
+	R_DrawSpanRec (r, source, 0);
+}
+
+void R_DrawSpansLow (const spanrec_t* r, const spanrec_t* end, const byte* source)
+{
+    for ( ; r < end; r++)
+	R_DrawSpanRec (r, source, 1);
 }
 
 void R_DrawSpan (void)
 {
-    R_DrawSpanAt (ylookup[ds_y] + columnofs[ds_x1], 0);
+    R_DrawSpanAt (0);
 }
 
 // Low detail: view columns are two screen columns wide
 void R_DrawSpanLow (void)
 {
-    R_DrawSpanAt (ylookup[ds_y] + columnofs[ds_x1 << 1], 1);
+    R_DrawSpanAt (1);
 }
 #else
 void R_DrawSpan (void)

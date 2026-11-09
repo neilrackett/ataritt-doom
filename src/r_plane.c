@@ -117,6 +117,55 @@ void R_InitPlanes (void)
 //
 // BASIC PRIMITIVE
 //
+#if defined(USEASM) && defined(__M68020__)
+// 68020+ (TTDOOM): a visplane's spans are set up as records (R_MapPlane)
+// and drawn together after it (R_FlushSpans), as walls do their columns.
+#define MAXPLANESPANS	256
+static spanrec_t	planespans[MAXPLANESPANS];
+static spanrec_t*	planespan = planespans;
+
+static void R_FlushSpans (void)
+{
+    if (detailshift)
+	R_DrawSpansLow (planespans, planespan, ds_source);
+    else
+	R_DrawSpans (planespans, planespan, ds_source);
+    planespan = planespans;
+}
+
+// R_MakeSpans only notes each span (R_StageSpan), and R_MapStagedSpans
+// works them out afterwards: R_MapPlane's sums and R_MakeSpans' loop in
+// turn missed the 68030's instruction cache a third of the time.
+#define MAXSTAGEDSPANS	512
+typedef struct
+{
+    short	y;
+    short	x1;
+    short	x2;
+} stagedspan_t;
+static stagedspan_t	stagedspans[MAXSTAGEDSPANS];
+static stagedspan_t*	stagedspan = stagedspans;
+
+static void R_MapStagedSpans (void);
+
+static inline void R_StageSpan (int y, int x1, int x2)
+{
+    stagedspan->y = y;
+    stagedspan->x1 = x1;
+    stagedspan->x2 = x2;
+    if (++stagedspan == stagedspans + MAXSTAGEDSPANS)
+	R_MapStagedSpans ();
+}
+#endif
+
+// Static, so that R_MakeSpans and R_DrawPlanes call it and each other
+// without the stack arguments of a global call: R_MakeSpans runs for every
+// column of every visplane.
+#if defined(USEASM) && defined(__M68020__)
+static inline
+#else
+static
+#endif
 void
 R_MapPlane
 ( int		y,
@@ -169,14 +218,34 @@ R_MapPlane
 	ds_colormap = planezlight[index];
     }
 	
+#if defined(USEASM) && defined(__M68020__)
+    R_SetupSpan (planespan, y, x1, x2, ds_colormap,
+		 ds_xfrac, ds_yfrac, ds_xstep, ds_ystep, detailshift);
+    if (++planespan == planespans + MAXPLANESPANS)
+	R_FlushSpans ();
+#else
     ds_y = y;
     ds_x1 = x1;
     ds_x2 = x2;
 
     // high or low detail
     spanfunc ();	
+#endif
 }
 
+
+#if defined(USEASM) && defined(__M68020__)
+// The spans R_MakeSpans noted, set up and drawn
+static void R_MapStagedSpans (void)
+{
+    const stagedspan_t*	t;
+
+    for (t = stagedspans; t < stagedspan; t++)
+	R_MapPlane (t->y, t->x1, t->x2);
+    stagedspan = stagedspans;
+    R_FlushSpans ();
+}
+#endif
 
 //
 // R_ClearPlanes
@@ -327,7 +396,7 @@ R_CheckPlane
 //
 // R_MakeSpans
 //
-void
+static inline void
 R_MakeSpans
 ( int		x,
   int		t1,
@@ -335,6 +404,9 @@ R_MakeSpans
   int		t2,
   int		b2 )
 {
+#if defined(USEASM) && defined(__M68020__)
+#define R_MapPlane	R_StageSpan
+#endif
     while (t1 < t2 && t1<=b1)
     {
 	R_MapPlane (t1,spanstart[t1],x-1);
@@ -345,6 +417,7 @@ R_MakeSpans
 	R_MapPlane (b1,spanstart[b1],x-1);
 	b1--;
     }
+#undef R_MapPlane
 	
     while (t2 < t1 && t2<=b2)
     {
@@ -447,6 +520,9 @@ void R_DrawPlanes (void)
 			pl->top[x],
 			pl->bottom[x]);
 	}
+#if defined(USEASM) && defined(__M68020__)
+	R_MapStagedSpans ();
+#endif
 	
 	Z_ChangeTag (ds_source, PU_CACHE);
     }

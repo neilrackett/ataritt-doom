@@ -383,7 +383,7 @@ void R_GenerateLookup (int texnum)
 // R_GetColumn
 //
 byte*
-R_GetColumn
+R_GetColumnSlow
 ( int		tex,
   int		col )
 {
