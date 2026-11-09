@@ -56,6 +56,71 @@ void atari_enable_megaste_turbo(void);
 void atari_restore_megaste_turbo(void);
 
 static long old_super_stack = 0;
+
+#ifdef TTDOOM
+#include <mint/cookie.h>
+
+// The 68030's caches (CACR). TOS 3.06 boots with $3111 (both caches, burst
+// fills, write allocate), but the desktop's Cache option can leave them off,
+// which would cost far more than anything here saves. Write allocate is for
+// code in user mode, and the game runs in supervisor mode from here on:
+// without it, the renderer's byte writes that miss the data cache don't
+// evict colormap and texture lines (0.5% under Hatari). Both caches are
+// cleared at each change, so nothing cached in user mode goes stale.
+// -cacr <hex> sets another value (bits $3111) for measuring on a real TT:
+// Hatari charges 2 clocks a long for the rest of a burst fill, where a
+// 68030 can take 1, and runs 10% faster with data bursts off (0111), which
+// a real TT-RAM may well not. I_Quit / I_Error put the old value back.
+#define CACR_EI		0x0001	// instruction cache on
+#define CACR_CI		0x0008	// clear the instruction cache
+#define CACR_IBE	0x0010	// instruction burst fills
+#define CACR_ED		0x0100	// data cache on
+#define CACR_CD		0x0800	// clear the data cache
+#define CACR_DBE	0x1000	// data burst fills
+#define CACR_WA		0x2000	// write allocate
+
+static long	old_cacr = -1;
+
+static long I_GetCacr (void)
+{
+    long	v;
+
+    __asm__ volatile ("movec	%%cacr,%0" : "=d" (v));
+    return v;
+}
+
+static void I_SetCacr (long v)
+{
+    __asm__ volatile ("movec	%0,%%cacr" : : "d" (v) : "memory");
+}
+
+static void I_InitCaches (void)
+{
+    long	cpu, cacr;
+    int		p;
+
+    if (Getcookie (C__CPU, &cpu) != C_FOUND || cpu != 30)
+	return;
+    old_cacr = I_GetCacr ();
+    cacr = CACR_EI | CACR_IBE | CACR_ED | CACR_DBE;
+    p = M_CheckParm ("-cacr");
+    if (p && p < myargc - 1)
+	cacr = strtol (myargv[p+1], NULL, 16) & 0x3111;
+    // Enabling a cache that was off: clear it first
+    I_SetCacr (cacr | CACR_CI | CACR_CD);
+    printf ("I_Init: 68030 caches %04lx (were %04lx)\n", cacr, old_cacr);
+}
+
+static void I_RestoreCaches (void)
+{
+    if (old_cacr >= 0)
+	I_SetCacr (old_cacr | CACR_CI | CACR_CD);
+    old_cacr = -1;
+}
+#else
+#define I_InitCaches()
+#define I_RestoreCaches()
+#endif
 static int super_enabled = 0;
 
 
@@ -162,6 +227,7 @@ void I_Init (void)
         sfp004_arm();
     if (!M_CheckParm("-nomste16"))
         atari_enable_megaste_turbo();
+    I_InitCaches();
     I_InitSound();
     I_InitMusic();
     //  I_InitGraphics();
@@ -178,6 +244,7 @@ void I_Quit (void)
     M_SaveDefaults ();
     I_ShutdownGraphics();
     atari_restore_megaste_turbo();
+    I_RestoreCaches();
     if (super_enabled && old_super_stack)
         Super((void *)old_super_stack);
     exit(0);
@@ -239,6 +306,7 @@ void I_Error (char *error, ...)
     D_QuitNetGame ();
     I_ShutdownGraphics();
     atari_restore_megaste_turbo();
+    I_RestoreCaches();
     if (super_enabled && old_super_stack)
         Super((void *)old_super_stack);
     getchar();
