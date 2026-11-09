@@ -115,6 +115,9 @@ FixedMul
 #endif
 }
 
+#ifndef FIXEDMUL_MULS64
+// The 68000's multiplies by values below one (FixedMul is cheaper on a
+// 68020+, see m_fixed.h)
 fixed_t
 FixedScale
 ( fixed_t	a,
@@ -216,6 +219,7 @@ FixedMulShort
     return FixedMul(a,(fixed_t)b << 16);
 #endif
 }
+#endif
 
 
 //
@@ -224,8 +228,14 @@ FixedMulShort
 
 static fixed_t FixedDiv2	(fixed_t a, fixed_t b);
 
+// On a 68020 to 68040 FixedDiv is an inline divs.l (m_fixed.h) and this is
+// its fallback for the 68060 and the edge cases.
 fixed_t
+#ifdef FIXEDMUL_MULS64
+FixedDivSoft
+#else
 FixedDiv
+#endif
 ( fixed_t	a,
   fixed_t	b )
 {

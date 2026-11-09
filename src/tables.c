@@ -46,6 +46,7 @@ rcsid[] = "$Id: tables.c,v 1.4 1997/02/03 16:47:57 b1 Exp $";
 
 
 
+#ifndef __M68020__
 int
 SlopeDiv
 ( unsigned	num,
@@ -60,6 +61,7 @@ SlopeDiv
 
     return ans <= SLOPERANGE ? ans : SLOPERANGE;
 }
+#endif
 
 
 

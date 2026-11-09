@@ -65,12 +65,51 @@ static inline fixed_t FixedMul (fixed_t a, fixed_t b)
     }
     return FixedMulSplit (a, b);
 }
+
+// The 68000's cheaper multiplies are slower than FixedMul here, an inline
+// muls.l. FixedScale32 (b in (-1, 1)) gives exactly FixedMul's result for
+// |b| < 65536, and every caller passes finesine/finecosine (at most 65535)
+// or FRICTION (checked on the host: 200 million products and every sine
+// value against every edge). FixedMulShort's callers pass post offsets
+// (0-255): a plain product. FixedScale (b a Q0.15 short) is FixedMul by 2b;
+// the 68000 version drops a's fraction (an operator precedence slip), so
+// sprites, its only user, move by up to a unit.
+#define FixedScale32(a, b)	FixedMul ((a), (b))
+#define FixedMulShort(a, b)	((fixed_t)(a) * (unsigned short)(b))
+#define FixedScale(a, b)	FixedMul ((a), (fixed_t)(b) << 1)
+
+// Division: one 64/32 divs.l of a<<16 by b, which truncates toward zero as
+// id's (DOS) FixedDiv does. Behind the same guard as the 68000's, which
+// keeps the quotient below 2^30. The 68000's bit-by-bit division gives the
+// same for |a| < 2^29 and |b| < 2^30 (checked on the host for 181 million
+// pairs); above that its shifts overflow, and divs.l is the one that agrees
+// with DOS. The 68060 traps the 64-bit form and keeps FixedDivSoft.
+fixed_t FixedDivSoft	(fixed_t a, fixed_t b);
+
+static inline fixed_t FixedDiv (fixed_t a, fixed_t b)
+{
+    if (fixedmul_muls64 && a != (int)0x80000000)
+    {
+	// The guard as the 68000's computes it, abs(MININT) negative
+	unsigned	ua = a < 0 ? 0u - (unsigned)a : (unsigned)a;
+	unsigned	ub = b < 0 ? 0u - (unsigned)b : (unsigned)b;
+	fixed_t		hi;
+
+	if ((int)(ua >> 14) >= (int)ub)
+	    return (a ^ b) < 0 ? (int)0x80000000 : 0x7fffffff;
+	hi = a >> 16;
+	a = (fixed_t)((unsigned)a << 16);
+	// hi:a / b, the quotient in a
+	__asm__ ("divs.l	%2,%1:%0"
+		 : "+d" (a), "+d" (hi)
+		 : "d" (b)
+		 : "cc");
+	return a;
+    }
+    return FixedDivSoft (a, b);
+}
 #else
 fixed_t FixedMul	(fixed_t a, fixed_t b);
-#endif
-
-// At startup: picks the fastest FixedMul this CPU can run.
-void M_InitFixed (void);
 
 // Multiplication of a Q15.16 fixed point value with a Q0.15 bit value representing range [-1; 1)
 fixed_t FixedScale	(fixed_t a, short b);
@@ -83,6 +122,10 @@ fixed_t FixedMulShort	(fixed_t a, short b);
 
 // Division of two Q15.16 fixed point values.
 fixed_t FixedDiv	(fixed_t a, fixed_t b);
+#endif
+
+// At startup: picks the fastest FixedMul this CPU can run.
+void M_InitFixed (void);
 
 
 

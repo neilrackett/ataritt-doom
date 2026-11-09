@@ -32,8 +32,27 @@
 // Endianess handling.
 // WAD files are stored little endian.
 #ifdef __BIG_ENDIAN__
+#ifdef __M68020__
+// Inline on a 68020+ (TTDOOM): a sprite column's offset is swapped per
+// column drawn, and a call costs more than the swap
+static inline unsigned short SwapSHORT (unsigned short x)
+{
+    __asm__ ("ror.w	#8,%0" : "+d" (x) : : "cc");
+    return x;
+}
+
+static inline unsigned long SwapLONG (unsigned long x)
+{
+    __asm__ ("ror.w	#8,%0\n\t"
+	     "swap	%0\n\t"
+	     "ror.w	#8,%0"
+	     : "+d" (x) : : "cc");
+    return x;
+}
+#else
 unsigned short	SwapSHORT(unsigned short);
 unsigned long	SwapLONG(unsigned long);
+#endif
 #define SHORT(x)	((short)SwapSHORT((unsigned short) (x)))
 #define LONG(x)         ((long)SwapLONG((unsigned long) (x)))
 #else

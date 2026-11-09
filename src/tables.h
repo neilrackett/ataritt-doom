@@ -86,10 +86,29 @@ extern angle_t		tantoangle[SLOPERANGE+1];
 
 // Utility function,
 //  called by R_PointToAngle.
+#ifdef __M68020__
+// Inline on a 68020+, where the divide is one divu.l: R_PointToAngle runs
+// twice per seg and bounding box
+static inline int
+SlopeDiv
+( unsigned	num,
+  unsigned	den)
+{
+    unsigned 	ans;
+
+    if (den < 512)
+	return SLOPERANGE;
+
+    ans = (num<<3)/(den>>8);
+
+    return ans <= SLOPERANGE ? ans : SLOPERANGE;
+}
+#else
 int
 SlopeDiv
 ( unsigned	num,
   unsigned	den);
+#endif
 
 
 #endif
