@@ -273,6 +273,10 @@ make stdoom           # dist/STDOOM.TOS
 make ttdoom           # dist/TTDOOM.TOS
 make clean            # build/ and those programs (the WADs in dist/ stay)
 
+# TTDOOM benchmarks (Hatari, see "Testing in Hatari"): baseline vs working tree
+tools/bench/mkbuild.sh base @HEAD && tools/bench/mkbuild.sh cur
+tools/bench/run.sh base low; tools/bench/run.sh cur low
+
 # RP2040 microfirmware for SidecarTridge Multi-device
 make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION].uf2
 ```
@@ -329,6 +333,14 @@ Anything that reads or publishes Xpad: read
 
 ## TTDOOM (TT / Falcon) — notes
 
+- **Target:** a TT030 with 2 MB ST-RAM and 4 MB TT-RAM. Program (~850K),
+  `screens[0..3]` and the 2.44 MB zone all land in TT-RAM there (the
+  start-up line says `Fast RAM allocated`); ST-RAM holds the display pages
+  and the DMA sound buffers. TTDOOM also runs on a Falcon and a 4 MB TT.
+- **Exactness:** the renderer may differ from id's by sub-texel amounts (a
+  visual check: `tools/bench/shots.py`); never fewer pixels or features.
+  Game logic must stay exact: demos 1-3 must give the same BENCH STATE hash
+  (`tools/bench`). C2P and mixer changes are checked bit for bit.
 - **Build:** the `ttdoom` target in the root `Makefile` (`build/*.tt.o`,
   `-m68020-60 -msoft-float -fomit-frame-pointer -DTTDOOM -DSCREENHEIGHT=240`;
   no `-mtune=68030`, whose 64-bit multiplies for constant divides a 68060
@@ -382,22 +394,72 @@ Anything that reads or publishes Xpad: read
   (`C2P_CACHE_CHECK`). Under Hatari +3-5% on the TT, +2-3% on the Falcon;
   every page of a timedemo identical to the per-row loops' (TT, Falcon VGA
   and RGB, sizes 9 and 10).
-- **Span loop:** `R_DrawSpan`/`R_DrawSpanLow` have a hand-written loop for
-  68020+ (`__M68020__`, the ISA macro; a `-mtune` changes which `__mc680x0__`
-  are defined): 10.5 instructions a pixel vs gcc's 14, bit-identical
-  (checked span by span against the C loop over a timedemo). The 68000 build
-  keeps the C loop; its `R_DrawColumn`/`R_DrawSpan` machine code is unchanged.
+- **Pair C2P (low detail):** in low detail the 3D view is in pixel pairs,
+  so `c2p8_pairbox1/2` gather a group's 8 distinct pixels into two
+  registers (a with c's odd bytes, b with d's), transpose them with four
+  exchanges and double each bit by exchanging a register with a copy of
+  itself: 56 instructions a group against 74. Used for the view's rows
+  outside the dirty box (`c2p8_view_rows`, `c2p_view_8bpp`) when
+  `c2p8_pairs()` (low detail, in play, no menu or automap). The
+  exchanges' roles were found by simulating the instructions against a
+  reference conversion; checked with `-c2ptest` and by decoding pages of
+  timedemos (`pagecheck.py`). TT low 25 -> 20 ms (+2 ms for HUD rows).
+- **Column loop (68020+, `__M68020__`, the ISA macro; a `-mtune` changes
+  which `__mc680x0__` are defined):** vanilla's 16.16 step in four
+  instructions a pixel. `pos` keeps the fraction in the high word and the
+  7-bit texel row in the low word, which indexes the column directly;
+  `addx.l` steps both, the fraction's carry reaching the row through X on
+  the next pixel. X starts as the first step's carry (set with `move.w
+  ..,ccr`, which also sets Z for an even count) with the fraction a step
+  on, so every row is exactly vanilla's `(frac>>16)&127` (the 68000 loop
+  keeps 8.8). The row step is taken mod 128 so the low word never carries.
+- **Span loop:** after Aki Laukkanen's span for ADoom: u and v in two
+  registers with the fractions crossed over (u = v fraction : u texel, v =
+  u fraction : v texel*64), so two `addx.l` chain one X flag; `or.w`/`and.w`
+  with `$ffc0`/`$f03f` build the index as `$f000 + v*64 + u` (the flat
+  + `$1000`). 7.5 instructions a pixel against 10.5, 16 fraction bits
+  against 9; a texel wrap carries into the other fraction's lowest bit
+  (1/65536 of a texel). Spans 20.5 -> 15 ms low, 36 -> 28 high.
+- **Batched walls and flats (`colrec_t`, `spanrec_t`, `r_draw.h`):** the
+  seg loop only notes each wall tier (`segtiers`); `R_DrawSegTiers` then
+  fetches the columns and sets up column records (`R_SetupColumn`), and
+  `R_DrawColumns` draws them. `R_MakeSpans` notes spans (`R_StageSpan`) and
+  `R_MapStagedSpans` sets up and draws a visplane's. Each of those loops
+  mostly fits the 68030's 256-byte instruction cache, where the seg loop,
+  `R_GetColumn` chain and drawer in turn missed a third of the time.
+  Sprites, sky and masked segs still draw a column at a time
+  (`R_DrawColumn` = set-up + draw of one record).
+- **Texture columns:** `R_GetColumn` is inline (`r_data.h`): a cached lump
+  or composite is returned directly; `W_CacheLumpNum`/`Z_ChangeTag2` only
+  on a miss. That was 3.4 ms a frame of call chains.
+- **Fuzz:** asm on a 68020+, five instructions a pixel (seven low), from
+  `fuzzoffsetx`, `fuzzoffset` repeated so a column never wraps the table.
+  Same pixels as the C loops.
 - **FixedMul:** on a 68020 to 68040 (`_CPU` cookie, `M_InitFixed` in
   `main`) it is one 64-bit `muls.l`, bit-identical to the 68000's split
   multiply (checked for 50 million products on the host and a million on
   an emulated 68030). The 68060 lacks the 64-bit form and keeps the split.
   TTDOOM is also built with `-fomit-frame-pointer`. Together +6-8% under
   Hatari.
+- **The other fixed-point helpers (`m_fixed.h`, `FIXEDMUL_MULS64`):**
+  `FixedDiv` is an inline 64/32 `divs.l` behind the 68000 version's guard.
+  It equals the 68000's bit-by-bit division wherever that one works (|a| <
+  2^29, |b| < 2^30; 181 million pairs on the host); above that the old
+  shifts overflow (and can loop for ever) and `divs.l` agrees with id's
+  DOS `idiv`. `FixedScale32` is `FixedMul` (identical for |b| < 65536: all
+  callers pass sines, cosines or `FRICTION`; 200 million products), and
+  `FixedMulShort` a plain product. `FixedScale` is `FixedMul(a, b<<1)`: the
+  68000 version drops a's fraction (`+ neg ? 0xffff : 0` precedence), so
+  sprites move by up to a unit. `SlopeDiv` and the byte swaps (`m_swap.h`)
+  are inline too. 5.6 ms a frame of calls.
 - **Low detail (F5):** works in both binaries. `R_DrawColumnLow` shares
   `R_DrawColumn`'s asm (each pixel written twice); id's versions doubled the
   global `dc_x` (breaking the sprite loop) and `R_DrawSpanLow` counted after
   doubling (drew twice the span). Fuzz/translated columns have `Low`
-  versions. Width checks outside the renderer use `scaledviewwidth`.
+  versions; `R_DrawVisSprite` takes `transcolfunc` (id's hard-coded
+  `R_DrawTranslatedColumn` drew player colours at an undoubled x, which also
+  broke the pair C2P's pairs). Width checks outside the renderer use
+  `scaledviewwidth`.
 - **Word colormaps (TTDOOM, `WORD_COLORMAPS`):** on a 68020+ the low-detail
   column and span loops store each pixel pair with one `move.w` from
   `colormaps_w` (`R_InitColormaps`: every light table with each colour in
@@ -409,6 +471,26 @@ Anything that reads or publishes Xpad: read
   rect and what `playdirtybox` says changed, not the static border. Anything
   drawn above the status bar outside the view must reach `V_MarkRect`: the
   HUD message's erase (`HUlib_eraseTextLine`) marks its rows for this.
+- **Sound mixer (68020+):** each channel in asm (seven instructions a
+  sample, the position stepped by `add.w`/`addx.l`, a sound's last sample
+  worked out up front), mixed into `mixacc` in TT-RAM and copied to the
+  ST-RAM DMA buffer with long stores: no read-modify-write of ST-RAM per
+  channel and sample. Same samples as the C mixer (`-mixtest`). The DMA
+  runaway check's bound was `sizeof(sndbuffers)`, a pointer's 4 bytes, so
+  every VBL restarted the DMA and mixed a buffer: 60 a second on a TT for
+  49 played, a fifth of every sound cut. 2.9 -> 1.5 ms a frame.
+- **Caches:** `I_Init` (supervisor) sets CACR to `$1111` on a 68030
+  (TOS 3.06 boots with `$3111`): both caches and burst fills, no write
+  allocate, which only matters for user mode, and the game runs in
+  supervisor mode; both caches are cleared at each change and the old
+  value is restored at exit. `-cacr <hex>` overrides it (see Hatari's
+  burst timing below).
+- **Line of sight (game logic, exact):** `P_LookForPlayers` tests the
+  player's angle and distance before `P_CheckSight` (id did it after:
+  either failing skips the player, and the sight check only bumps
+  `validcount`). `P_DivlineSide` is inline and the sight check's BSP walk
+  a loop with its own stack (TTDOOM), visiting nodes in the same order.
+  Sight checks were 58% of the game logic: 9.2 -> 7.3 ms a tic (demo1).
 
 ### Hard-won fixes (do not regress)
 
@@ -428,6 +510,22 @@ Anything that reads or publishes Xpad: read
   (`atari_vmode_supported()` in `main`, before `I_InitSound`).
 - **Accelerator gate:** `sidecart_c2p_init()` skips detection when `_MCH` is
   TT or later or `Getrez() != 0`, so a cart in a TT/Falcon is never touched.
+- **The pair C2P trusts the dirty box:** in low detail, anything drawn into
+  the 3D view at full resolution (text, patches, wipes, a new effect) must
+  reach `V_MarkRect`, or its rows are converted as pairs and lose every
+  other pixel. Drawers in the view must keep pixel pairs.
+- **X flag loops:** between the `move.w ..,ccr` that primes a column or
+  span loop and each `addx`, nothing may set X: no `add`, `sub`, `neg`,
+  shifts or rotates. `and`, `or`, `move`, `tst`, `btst`, `lea`, `dbra`
+  leave it.
+- **Batched columns point into cached lumps:** fetching an uncached column
+  can `Z_Malloc` and purge a lump an earlier record points into, so
+  `R_DrawSegTiers` draws what it has set up before `R_GetColumnSlow`
+  (`R_GetCachedColumn` never allocates). Checked by forcing a miss every
+  7th column: identical frames.
+- **gcc 4.6 for m68k:** inline asm can't take more data registers than are
+  free (8 less the clobbers); fold flags into a CCR value rather than add
+  an operand. A register variable (`register long x asm("d5")`) pins one.
 
 ### Testing in Hatari
 
@@ -444,60 +542,114 @@ frame with both versions in one binary (onto a copy of the page) and
 compare. Run at most 6 Hatari instances at a time, with
 `--confirm-quit false`.
 
-**Benchmarks** run on a scratch copy of the tree, never the repo, patched
-so `main()` runs `-timedemo demo1` (Hatari can't pass arguments to an
-autostarted program) and the demo ends at `gametic >= 600` (beside the
-`DEMOMARKER` test in `G_ReadDemoTiccmd`). The disk folder holds the
-program, `DOOM1.WAD` and a `doomrc.cfg` (`screenblocks 10`; `detaillevel`
-1 is low detail, 0 high). TT: TOS 3.06, `--machine tt --memsize 8 --ttram 16
---addr24 off`. Falcon: EmuTOS 512k, `--machine falcon --monitor vga
---memsize 14 --dsp none`. With `--conout 2` the result reaches stdout as
-`Error: timed 600 gametics in N realtics`; a frame takes N/21 ms
-(N x 1000 / 35 / 600). Emulated time ignores host load, so
-`--fast-forward on` and parallel runs are fine. To cost one part, time a
-build with that part switched off. For a per-function profile, send
-`hatari-debug symbols prg`, `hatari-debug profile on` and, after the run,
-`hatari-debug profile symbols 45`.
+**Benchmarks:** `tools/bench` (work folder `tmp/bench`). `mkbuild.sh LABEL
+[SRC | @REF] [stdoom]` builds a patched copy of the working tree (or a
+commit: `@HEAD` is the baseline without your changes); `run.sh LABEL MODE
+[prof]` runs a 600-tic timedemo headless and prints realtics, ms a frame
+(N x 1000 / 35 / 600) and the BENCH STATE game-state hash. MODE is `low`
+or `high` (size 10), optionally with `nodraw` (game logic a tic), `nosfx`
+or `nosound`; `DEMO=demo2`, `MACHINE=falcon` (EmuTOS 512k in `$ETOS512`,
+VGA) or `ste` (STDOOM), `EXTRAARGS` (`-benchshot N`, `-mixtest`,
+`-c2ptest`, `-cacr X`) and `TAG` (to tell parallel runs apart). The patch
+(`benchpatch.py`) reads arguments from `ARGS.TXT` (Hatari can't pass them
+to an autostarted program), ends demos at tic 600 and adds the dumps and
+self-tests. The TT is the target: TOS 3.06, `--machine tt --mmu off
+--monitor vga --memsize 2 --ttram 4 --addr24 off --cpu-exact on
+--data-cache on`. Emulated time ignores host load, so `--fast-forward on`
+and up to six parallel runs are fine.
+
+- **Profiles:** `run.sh LABEL MODE prof` breaks on the first demo tic to
+  start Hatari's profiler and on `I_Error` (the result) to save it and
+  quit; `profagg.py <run>/log tmp/bench/nm_LABEL.txt 40` lists functions
+  by cycles, with instruction-cache misses and data-cache hits. (Profile
+  through the FIFO alone and the host's reaction time cuts off the first
+  few hundred tics.)
+- **Renderer checks:** `-benchshot N` writes `screens[0]` (`SN.RAW`) and
+  the converted page (`PN.RAW`); `shots.py WAD runA runB out` compares two
+  builds' frames (PNG and a difference image), `pagecheck.py` decodes the
+  pages against the frames (C2P).
+- **Game logic:** demos 1-3, low or `nodraw`, must print the same BENCH
+  STATE hash as the baseline (demo1 `81c05110`, demo2 `a689a893`, demo3
+  `c3d20ea1` with DOOM1.WAD 1.9).
+- **Real play** runs about 35/fps tics a frame where the timedemo runs one,
+  so a frame is R / (1 - T/28.6 ms), R the timedemo frame less a tic (T,
+  from `nodraw`).
 
 ### Where the time goes (Hatari, size 10, 600-tic timedemo)
 
-|                       | TT low | TT high | Falcon VGA low | Falcon VGA high |
-| --------------------- | ------ | ------- | -------------- | --------------- |
-| Frame                 | 111 ms | 159 ms  | 260 ms         | 370 ms          |
-| C2P (`c2p8_box`)      | 26 ms  | 26 ms   | 53 ms          | 53 ms           |
+TT is the target (2 MB + 4 MB TT-RAM), demo1, ms a frame:
 
-Measured 2026-11-09 at `cba4581`.
+|                                      | TT low       | TT high       | Falcon VGA low | Falcon VGA high |
+| ------------------------------------ | ------------ | ------------- | -------------- | --------------- |
+| Frame                                | 111 -> 86    | 159 -> 127    | 259 -> 195     | 369 -> 284      |
+| C2P                                  | 27 -> 22     | 27 -> 27      |                |                 |
+| Column drawing (walls, sprites, sky) | 24 -> 19     | 45 -> 35      |                |                 |
+| Seg loop, texture fetch              | 10 -> 8      | 18 -> 15      |                |                 |
+| Span drawing                         | 21 -> 15     | 36 -> 28      |                |                 |
+| Span set-up                          | 6 -> 7       | 7 -> 7        |                |                 |
+| Fixed-point helpers (calls)          | 6 -> 0       | 7 -> 0        |                |                 |
+| Sound mixing                         | 3.2 -> 1.6   | 3.4 -> 1.9    |                |                 |
+| Line of sight                        | 5.4 -> 3.4   | 5.4 -> 3.4    |                |                 |
+| Everything else                      | 9 -> 9       | 9 -> 10       |                |                 |
 
-- **The C2P** is the frame time minus a build whose `c2p8_box` returns at
-  once. On the TT the second scanline of each line is only 1.3-1.5 ms of
-  it (against a build writing each line once). The 68030 stores behind
-  the merges, so nearly all the cost is reading and merging.
-- **Before the box C2P** the TT's C2P (31 ms) split as ~18 ms merges and
-  ~12.5 ms loads and stores.
-- **The rest** has not been split out. High detail costs 48 ms more than
-  low on the TT, so column and span drawing is at most ~95 ms of a
-  high-detail frame.
-- **The status bar** costs little. Its dirty box is one bounding box (two
-  widgets that change pull in everything between them), but even the whole
-  bar would be ~3.5 ms on the TT.
+Before: `00774e6`. After: the optimisations above, 2026-11-09. Demos 2 and
+3: TT low 118 -> 92 and 130 -> 101, high 168 -> 135 and 186 -> 150. Game
+logic a tic (`nodraw`): 9.2 -> 7.3, 8.8 -> 7.9, 10.9 -> 9.2. In real
+play (about 4 tics a frame) that makes TT low ~150 -> ~106 ms (6.6 ->
+9.5 fps) and high ~220 -> ~161 ms (4.5 -> 6.2 fps).
+
+- **The drawers are now memory-bound** under Hatari: low-detail spans hit
+  the data cache 58% of the time (the 512-byte word colormaps can't fit
+  the 256-byte cache), high-detail 68%, columns 84%. Fewer instructions
+  bought less than their count suggests.
+- **Hatari's TT memory timing is not the TT's.** It treats TT ST-RAM as a
+  16-bit bus shared with the video; a real TT gives the CPU a 32-bit slot
+  every 500 ns (about 8 MB/s), so a 320x480 page (153,600 bytes) takes at
+  least 19 ms of stores there. It charges 2 clocks for each of a burst
+  fill's three extra longs, where a 68030 can take 1: with data bursts off
+  (`-cacr 0111`) TTDOOM runs 10% faster under Hatari, which a real TT-RAM
+  may not. Compare builds in Hatari; take absolute times and anything
+  bound by ST-RAM to a real TT.
+- **Write allocate** off (`-cacr 1111` against TOS's `3111`): 0.5% under
+  Hatari.
+- **-O2 times the same as -O3; -Os is 7% slower.**
 
 ### Possible follow-ups (TTDOOM)
 
 - **Time on real hardware.** Everything above was measured in Hatari, whose
   68030 timing is approximate. A real Falcon refills its instruction cache
-  from ST-RAM over a 16-bit bus, so the box C2P's cache fit may count for
+  from ST-RAM over a 16-bit bus, so the loops' cache fit may count for
   more there.
 - **Spread the zoomed views' stores.** `C2P8_MERGE_FN` (sizes 3-5) still
   stores 2, 4 or 8 copies of each group in one burst. With more stores than
   merges, measure whether spreading still pays.
-- **Low-detail pair C2P.** In low detail each pixel pair is identical, so a
-  group has 8 distinct pixels. A host search found 48 instructions a group
-  instead of 66 (gather a/c and b/d with `$FF00FF00`, transpose the 64
-  bits in two registers, then double every bit): ~5 ms a frame on the TT
-  before the box C2P. With stores now hidden behind the merges, the
-  arithmetic is a bigger share, so it may be worth more. It is valid only
-  where pairs are identical: rows in `playdirtybox` (HUD messages, the
-  pause sign, wipes) need the full C2P. It would be a new box loop.
+- **On a real TT:** time `-cacr 0111` (data bursts off) and `3111` (TOS's)
+  against the default `1111`; time the C2P against a build writing each line
+  once, to see whether ST-RAM's 500 ns slots bound it; and the mixer's
+  ST-RAM saving, which Hatari understates.
+- **TT line doubling in hardware (rejected for now).** Rewriting the TT's
+  video counter from Timer B each line would display each line twice for
+  free, but costs about 14,400 interrupts a second (about 7% of the CPU)
+  to save the second line's stores (1.4 ms in Hatari). Only if a real TT
+  shows the C2P bound by ST-RAM.
+- **Scrambled chunky layout (rejected).** Pixels stored in the order the
+  C2P's 8-bit pass produces would drop that pass (19% of a group's
+  instructions) and cost columns nothing (`columnofs`), but spans,
+  patches, wipes, the automap and screenshots would all need the order,
+  and a span loop absorbing it doesn't fit the instruction cache.
+- **Next phase, the toolchain.** gcc 4.6.4 (a.out, no LTO) is the limit on
+  the C side: a gcc 13+ `m68k-atari-mintelf` toolchain in
+  atarist-toolkit-docker, LTO (cross-file inlining of FixedDiv,
+  `R_PointToAngle`, `P_AproxDistance`), fastcall multilibs of MiNTLib or
+  libcmini, libgcc and libm for `-mfastcall` (`c2p8_box*` and
+  `sidecart_stubs.S` would need register entries; the current toolchain
+  has no fastcall multilib), PGO under Hatari, ELF symbols Hatari can read,
+  and vasm modules for the drawers and C2P.
+- **Smaller wins left:** `R_MapStagedSpans` still misses the instruction
+  cache a quarter of the time (gcc uses `bfextu` for the span set-up's
+  6-bit fields); the per-column `divu.l` for `iscale`; `P_CrossSubsector`
+  (2 ms a tic) and the thinker loop (1.5 ms); span stores packed into longs
+  (no data register is free in the span loop).
 - **Falcon true colour (unexplored).** The 16-bit mode needs no C2P but
   doubles the bytes on a bus the video also reads. The cheap first test is
   to keep the 8-bit renderer and replace the Falcon C2P with an 8-to-16-bit
