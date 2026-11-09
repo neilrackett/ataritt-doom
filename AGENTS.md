@@ -444,6 +444,43 @@ frame with both versions in one binary (onto a copy of the page) and
 compare. Run at most 6 Hatari instances at a time, with
 `--confirm-quit false`.
 
+**Benchmarks** run on a scratch copy of the tree, never the repo, patched
+so `main()` runs `-timedemo demo1` (Hatari can't pass arguments to an
+autostarted program) and the demo ends at `gametic >= 600` (beside the
+`DEMOMARKER` test in `G_ReadDemoTiccmd`). The disk folder holds the
+program, `DOOM1.WAD` and a `doomrc.cfg` (`screenblocks 10`; `detaillevel`
+1 is low detail, 0 high). TT: TOS 3.06, `--machine tt --memsize 8 --ttram 16
+--addr24 off`. Falcon: EmuTOS 512k, `--machine falcon --monitor vga
+--memsize 14 --dsp none`. With `--conout 2` the result reaches stdout as
+`Error: timed 600 gametics in N realtics`; a frame takes N/21 ms
+(N x 1000 / 35 / 600). Emulated time ignores host load, so
+`--fast-forward on` and parallel runs are fine. To cost one part, time a
+build with that part switched off. For a per-function profile, send
+`hatari-debug symbols prg`, `hatari-debug profile on` and, after the run,
+`hatari-debug profile symbols 45`.
+
+### Where the time goes (Hatari, size 10, 600-tic timedemo)
+
+|                       | TT low | TT high | Falcon VGA low | Falcon VGA high |
+| --------------------- | ------ | ------- | -------------- | --------------- |
+| Frame                 | 111 ms | 159 ms  | 260 ms         | 370 ms          |
+| C2P (`c2p8_box`)      | 26 ms  | 26 ms   | 53 ms          | 53 ms           |
+
+Measured 2026-11-09 at `cba4581`.
+
+- **The C2P** is the frame time minus a build whose `c2p8_box` returns at
+  once. On the TT the second scanline of each line is only 1.3-1.5 ms of
+  it (against a build writing each line once). The 68030 stores behind
+  the merges, so nearly all the cost is reading and merging.
+- **Before the box C2P** the TT's C2P (31 ms) split as ~18 ms merges and
+  ~12.5 ms loads and stores.
+- **The rest** has not been split out. High detail costs 48 ms more than
+  low on the TT, so column and span drawing is at most ~95 ms of a
+  high-detail frame.
+- **The status bar** costs little. Its dirty box is one bounding box (two
+  widgets that change pull in everything between them), but even the whole
+  bar would be ~3.5 ms on the TT.
+
 ### Possible follow-ups (TTDOOM)
 
 - **Time on real hardware.** Everything above was measured in Hatari, whose
@@ -461,8 +498,20 @@ compare. Run at most 6 Hatari instances at a time, with
   arithmetic is a bigger share, so it may be worth more. It is valid only
   where pairs are identical: rows in `playdirtybox` (HUD messages, the
   pause sign, wipes) need the full C2P. It would be a new box loop.
-- **Unexplored on the Falcon:** the 16-bit true-colour mode (no C2P, but
-  twice the bytes over the slow bus) and the DSP.
+- **Falcon true colour (unexplored).** The 16-bit mode needs no C2P but
+  doubles the bytes on a bus the video also reads. The cheap first test is
+  to keep the 8-bit renderer and replace the Falcon C2P with an 8-to-16-bit
+  table copy. If that isn't faster than the 53 ms C2P, the idea is dead. If
+  it is, render straight into the page: `colormaps_w` shows the drawers
+  barely change. Fuzz darkens by colour index, and palette flashes would
+  need the table rebuilt. Confirm on a real Falcon, since Hatari may not
+  model the video's share of the bus. The DSP is also unexplored.
+- **Planar rendering (no C2P): rejected.** Walls and sprites are
+  one-pixel-wide columns, so each pixel would be 8 bit read-modify-writes
+  in ST-RAM, where the C2P costs a fraction of a store. It would also mean
+  rewriting every drawer, fuzz, patches and wipes, to save at most the C2P.
+  The TT has no chunky mode, so Falcon true colour is the only C2P-free
+  route.
 
 ## Reference projects (siblings of this repo)
 
