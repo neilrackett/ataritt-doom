@@ -65,7 +65,9 @@ static int32_t muls(int16_t a, int16_t b) {
 // P_DivlineSide
 // Returns side 0 (front), 1 (back), or 2 (on).
 //
-int
+// Inline: the sight check's BSP walk calls it at every node and twice for
+// every line it meets.
+static inline int
 P_DivlineSide
 ( fixed_t	x,
   fixed_t	y,
@@ -268,6 +270,57 @@ boolean P_CrossSubsector (int num)
 // Returns true
 //  if strace crosses the given node successfully.
 //
+#ifdef TTDOOM
+// The BSP walk as a loop with its own stack of the nodes whose far side is
+// still to come, rather than a recursive call per node: the same nodes and
+// subsectors, in the same order, as id's recursion (below).
+#define SIGHTSTACK	128
+
+boolean P_CrossBSPNode (int bspnum)
+{
+    node_t*	stack[SIGHTSTACK];
+    char	sides[SIGHTSTACK];
+    int		sp = 0;
+    node_t*	bsp;
+    int		side;
+
+    for ( ; ; )
+    {
+	// Down the starting sides to a subsector
+	while (!(bspnum & NF_SUBSECTOR))
+	{
+	    bsp = &nodes[bspnum];
+	    // decide which side the start point is on
+	    side = P_DivlineSide (strace.x, strace.y, (divline_t *)bsp);
+	    if (side == 2)
+		side = 0;	// an "on" should cross both sides
+	    if (sp == SIGHTSTACK)
+		I_Error ("P_CrossBSPNode: BSP deeper than %i", SIGHTSTACK);
+	    stack[sp] = bsp;
+	    sides[sp++] = side;
+	    // cross the starting side
+	    bspnum = bsp->children[side];
+	}
+	if (!P_CrossSubsector (bspnum == -1 ? 0 : bspnum&(~NF_SUBSECTOR)))
+	    return false;
+
+	// Crossed: up to a node whose ending side is still to cross
+	for ( ; ; )
+	{
+	    if (!sp)
+		return true;
+	    bsp = stack[--sp];
+	    side = sides[sp];
+	    // the partition plane is crossed here
+	    if (side != P_DivlineSide (t2x, t2y, (divline_t *)bsp))
+		break;
+	    // the line doesn't touch the other side: this node is crossed
+	}
+	// cross the ending side
+	bspnum = bsp->children[side^1];
+    }
+}
+#else
 boolean P_CrossBSPNode (int bspnum)
 {
     node_t*	bsp;
@@ -302,6 +355,7 @@ boolean P_CrossBSPNode (int bspnum)
     // cross the ending side		
     return P_CrossBSPNode (bsp->children[side^1]);
 }
+#endif
 
 
 //

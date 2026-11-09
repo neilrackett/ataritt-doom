@@ -167,11 +167,25 @@ void D_PostEvent (event_t* ev)
 void D_ProcessEvents (void)
 {
     event_t*	ev;
+    // A store demo: the WADs never change once loaded, so look once rather
+    // than search the whole directory every tic (2,900 lumps in DOOM2.WAD)
+    static int	storedemo = -1;
 	
     // IF STORE DEMO, DO NOT ACCEPT INPUT
-    if ( ( gamemode == commercial )
-	 && (W_CheckNumForName("map01")<0) )
-      return;
+    if ( gamemode == commercial )
+    {
+	if (storedemo < 0)
+	{
+	    int	nomap01 = W_CheckNumForName("map01")<0;
+
+	    if (numlumps > 0)
+		storedemo = nomap01;
+	    if (nomap01)
+		return;
+	}
+	else if (storedemo)
+	    return;
+    }
 	
     for ( ; eventtail != eventhead ; eventtail = (++eventtail)&(MAXEVENTS-1) )
     {

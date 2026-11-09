@@ -529,9 +529,12 @@ P_LookForPlayers
 	if (player->health <= 0)
 	    continue;		// dead
 
-	if (!P_CheckSight (actor, player->mo))
-	    continue;		// out of sight
-			
+	// The angle test before the sight check, which costs far more (id
+	// had them the other way round). Either one failing skips the
+	// player, and neither changes anything the other or the game reads:
+	// P_CheckSight only bumps validcount, which is compared for equality
+	// after each increment, and its own counters. So the same players are
+	// seen, and demos stay in sync.
 	if (!allaround)
 	{
 	    an = R_PointToAngle2 (actor->x,
@@ -549,6 +552,9 @@ P_LookForPlayers
 		    continue;	// behind back
 	    }
 	}
+
+	if (!P_CheckSight (actor, player->mo))
+	    continue;		// out of sight
 		
 	actor->target = player->mo;
 	return true;
