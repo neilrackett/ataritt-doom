@@ -29,6 +29,7 @@ rcsid[] = "$Id: i_unix.c,v 1.5 1997/02/03 22:45:10 b1 Exp $";
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <string.h>
 
 #include <math.h>
 
@@ -565,7 +566,10 @@ int I_SoundIsPlaying(int handle)
 __attribute_noinline__ boolean I_ShouldSubmitSound() {
   unsigned long addr = *pDmaSndAdrLo | (*pDmaSndAdrMi << 8) | (*pDmaSndAdrHi << 16);
   // Sometimes we'll see a runaway DMA sound chip. Stop it in its tracks!
-  if ((signed char*)addr < sndbuffers || (signed char *)addr > sndbuffers + sizeof(sndbuffers)) {
+  // (The four buffers: sizeof(sndbuffers) is a pointer's, which made every
+  // VBL see a runaway, restart the DMA and mix another buffer: 60 a second
+  // on a TT, for 49 that play, cutting a fifth of every sound.)
+  if ((signed char*)addr < sndbuffers || (signed char *)addr > sndbuffers + 4*MIXBUFFERSIZE) {
         *pDmaSndCtrl &= ~DMASND_CTRL_ON;
         return 1;
   }
@@ -576,6 +580,109 @@ __attribute_noinline__ boolean I_ShouldSubmitSound() {
   return result;
 }
 
+#ifdef __M68020__
+// 68020+ (TTDOOM): a channel's samples in asm, seven instructions each, the
+// position stepped as the C loop below steps it (in += the carry of
+// remainder += step) with add.w and addx.l. The channels are mixed in
+// TT-RAM (mixacc) and the result copied to the DMA buffer in ST-RAM with
+// long stores: each channel after the first adds into the buffer, which in
+// ST-RAM costs a read and a write in the video's slots per sample. The
+// mixed samples are the C loop's.
+static short mixacc[SAMPLECOUNT];
+
+// Every channel after the first adds to the buffer
+static void mix_channel(short *out, short chan)
+{
+  const char *lvol = channelleftvol_lookup[chan];
+  const char *rvol = channelrightvol_lookup[chan];
+  unsigned char *in = channels[chan], *channelend = channelsend[chan];
+  unsigned int step = channelstep[chan];
+  unsigned int remainder = channelstepremainder[chan];
+  boolean ends = in + ((SAMPLECOUNT * step + remainder) >> 16) >= channelend;
+  short n = SAMPLECOUNT;
+  unsigned long idx = 0;
+  unsigned long sample = 0;	// high bits clear: an index
+  unsigned short dl;
+
+  if (ends)
+  {
+    // The samples up to the one that reaches the end: the smallest n >= 1
+    // with remainder + n*step >= (channelend - in) << 16 (at most
+    // SAMPLECOUNT, as it ends in this buffer)
+    long need = ((long)(channelend - in) << 16) - (long)remainder;
+    n = need <= 0 ? 1 : (need + step - 1) / step;
+  }
+  asm volatile (
+    "subq.w  #1,%[n]                    \n\t"
+    "0:                                 \n\t"
+    "move.b  (%[in],%[idx].l),%[s]      \n\t"
+    "move.b  (%[lvol],%[s].w),%[dl]     \n\t"
+    "lsl.w   #8,%[dl]                   \n\t"
+    "move.b  (%[rvol],%[s].w),%[dl]     \n\t"
+    "add.w   %[dl],(%[out])+            \n\t"
+    "add.w   %[sf],%[rem]               \n\t" // the carry to X
+    "addx.l  %[si],%[idx]               \n\t"
+    "dbra    %[n],0b                    \n\t"
+    : [out] "+a" (out), [idx] "+d" (idx), [s] "+d" (sample),
+      [dl] "=&d" (dl), [rem] "+d" (remainder), [n] "+d" (n)
+    : [in] "a" (in), [lvol] "a" (lvol), [rvol] "a" (rvol),
+      [sf] "d" (step & 0xffff), [si] "d" (step >> 16)
+    : "cc", "memory");
+  if (ends)
+  {
+    channels[chan] = 0;
+    return;
+  }
+  channels[chan] = in + idx;
+  channelstepremainder[chan] = remainder & 0xffff;
+}
+
+// The first channel writes rather than adds
+static void mix_first_channel(short *out, short chan)
+{
+  const char *lvol = channelleftvol_lookup[chan];
+  const char *rvol = channelrightvol_lookup[chan];
+  unsigned char *in = channels[chan], *channelend = channelsend[chan];
+  unsigned int step = channelstep[chan];
+  unsigned int remainder = channelstepremainder[chan];
+  boolean ends = in + ((SAMPLECOUNT * step + remainder) >> 16) >= channelend;
+  short n = SAMPLECOUNT;
+  unsigned long idx = 0;
+  unsigned long sample = 0;
+  unsigned short dl;
+
+  if (ends)
+  {
+    long need = ((long)(channelend - in) << 16) - (long)remainder;
+    n = need <= 0 ? 1 : (need + step - 1) / step;
+    // The rest of the buffer is silence
+    memset (out + n, 0, (SAMPLECOUNT - n) * sizeof(short));
+  }
+  asm volatile (
+    "subq.w  #1,%[n]                    \n\t"
+    "0:                                 \n\t"
+    "move.b  (%[in],%[idx].l),%[s]      \n\t"
+    "move.b  (%[lvol],%[s].w),%[dl]     \n\t"
+    "lsl.w   #8,%[dl]                   \n\t"
+    "move.b  (%[rvol],%[s].w),%[dl]     \n\t"
+    "move.w  %[dl],(%[out])+            \n\t"
+    "add.w   %[sf],%[rem]               \n\t" // the carry to X
+    "addx.l  %[si],%[idx]               \n\t"
+    "dbra    %[n],0b                    \n\t"
+    : [out] "+a" (out), [idx] "+d" (idx), [s] "+d" (sample),
+      [dl] "=&d" (dl), [rem] "+d" (remainder), [n] "+d" (n)
+    : [in] "a" (in), [lvol] "a" (lvol), [rvol] "a" (rvol),
+      [sf] "d" (step & 0xffff), [si] "d" (step >> 16)
+    : "cc", "memory");
+  if (ends)
+  {
+    channels[chan] = 0;
+    return;
+  }
+  channels[chan] = in + idx;
+  channelstepremainder[chan] = remainder & 0xffff;
+}
+#else
 #define BLOCKSIZE 4
 
 static void mix_channel(short *out, short chan, boolean first)
@@ -645,6 +752,7 @@ static void mix_channel(short *out, short chan, boolean first)
       *out++ = 0;
   }
 }
+#endif
 
 //
 // This function loops all active (internal) sound
@@ -671,7 +779,14 @@ void I_UpdateSound( void )
   {
     if (channels[chan])
     {
+#ifdef __M68020__
+      if (num_active_channels == 0)
+        mix_first_channel(mixacc, chan);
+      else
+        mix_channel(mixacc, chan);
+#else
       mix_channel((short*) mixbuffer, chan, num_active_channels == 0);
+#endif
       num_active_channels++;
     }
   }
@@ -680,6 +795,10 @@ void I_UpdateSound( void )
     // Optimization: If no channels were active, use the pre-initialized zero frame.
     mixbuffer = zerobuffer;
   }
+#ifdef __M68020__
+  else
+    memcpy (mixbuffer, mixacc, sizeof(mixacc));
+#endif
 
 #ifdef SNDINTR
     // Debug check.
