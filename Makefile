@@ -6,6 +6,12 @@
 #   make stdoom       dist/STDOOM.TOS
 #   make ttdoom       dist/TTDOOM.TOS
 #   make clean        removes build/ and those programs (not the WADs)
+#   make ttdoom TOOLCHAIN=mintelf
+#                     dist/mintelf/TTDOOM.TOS, built with gcc 13; add LTO=1
+#                     for link-time optimisation (dist/mintelf-lto)
+#   tools/bench/pgo.sh LABEL
+#                     gcc 13, LTO and profile-guided optimisation (PGO=gen,
+#                     then PGO=use), trained on the benchmark's timedemos
 #   make sidecart     the DOOM Accelerator firmware and its test apps
 #                     (sidecart/Makefile), e.g. make sidecart debug
 #
@@ -15,7 +21,11 @@
 #
 ################################################################
 
-CC = m68k-atari-mint-gcc
+# TOOLCHAIN=mintelf builds with the toolkit's gcc 13 (m68k-atari-mintelf)
+# instead of gcc 4.6.4 (m68k-atari-mint), into build/mintelf and dist/mintelf.
+TOOLCHAIN = mint
+CC = m68k-atari-$(TOOLCHAIN)-gcc
+NM = m68k-atari-$(TOOLCHAIN)-nm
 
 .DEFAULT_GOAL := all
 .PHONY: all clean stdoom ttdoom sidecart
@@ -48,7 +58,9 @@ XPAD=lib/xpad/src
 FASTCALL=0
 
 # Add -mfastcall only when FASTCALL=1, and link the matching libm.a variant so
-# the calling convention agrees between Doom and libm.
+# the calling convention agrees between Doom and libm. It needs a toolchain
+# with -mfastcall and fastcall builds of libgcc and libc too, such as
+# Thorsten Otto's: the toolkit's gcc 4.6.4 and 13 have neither (AGENTS.md).
 ifeq ($(FASTCALL),1)
 FASTCALLFLAG=-mfastcall
 LIBVARIANT=.fastcall
@@ -67,12 +79,44 @@ CFLAGS=-O3 -Wall -DNORMALUNIX -DLINUX -D__BIG_ENDIAN__ -DUSEASM $(FASTCALLFLAG) 
 # runs on a Falcon without an FPU (Doom's renderer is fixed-point anyway).
 # No frame pointer: gcc otherwise gives every function a link/unlk, the
 # per-column and per-span drawers included, and a6 is one more register.
-CFLAGSTT=$(CFLAGS) -m68020-60 -msoft-float -fomit-frame-pointer -DTTDOOM -DSCREENHEIGHT=240
+CFLAGSTT=$(CFLAGS) -m68020-60 -msoft-float -fomit-frame-pointer -DTTDOOM -DSCREENHEIGHT=240 $(OPTFLAGS)
 
 vpath %.c $(SRC) $(SRC)/atarist-sfp004 $(XPAD)
 vpath %.S $(SRC)
 LDLIBS=$(SRC)/deps/68000.soft-float$(LIBVARIANT)/libm.a
 LDLIBSTT=$(SRC)/deps/68020-60.soft-float$(LIBVARIANT)/libm.a
+
+# Another toolchain: its own build and dist folders, and its own libm
+# (fdlibm), since the vendored libm.a are a.out, which an ELF link can't use.
+# With gcc 13, LTO=1 adds link-time optimisation, and PGO=gen and PGO=use
+# build TTDOOM to record a profile and then with it (tools/bench/pgo.sh).
+# Each has its own folders too, but the two PGO steps share theirs: gcc
+# looks for an object's profile beside it.
+ifneq ($(TOOLCHAIN),mint)
+VARIANT=$(TOOLCHAIN)$(if $(filter 1,$(LTO)),-lto)$(if $(filter 1,$(FASTCALL)),-fastcall)$(if $(PGO),-pgo)
+OBJDIR=build/$(VARIANT)
+DISTDIR=dist/$(VARIANT)
+LDLIBS=-lm
+LDLIBSTT=-lm
+# gcc 14 on rejects calls to undeclared functions, and with -mfastcall
+# they may not pass their arguments as the library expects: MiNTLib's
+# headers declare usleep, strcasecmp and strupr only with _GNU_SOURCE
+# (-std=c99 alone hides them)
+OPTFLAGS+=-D_GNU_SOURCE
+ifeq ($(LTO),1)
+OPTFLAGS+=-flto=auto
+endif
+# No value profiling: its counters are thread-local, which a TOS program
+# can't link (gcc reaches them through a GOT). Profile correction: the
+# sound VBL's counters run on while the profile is written, so their
+# counts can disagree (gcc otherwise stops: "corrupted profile info").
+ifeq ($(PGO),gen)
+OPTFLAGS+=-fprofile-generate -fno-profile-values -fprofile-info-section=gcov_info
+endif
+ifeq ($(PGO),use)
+OPTFLAGS+=-fprofile-use -fno-profile-values -fprofile-correction -fprofile-partial-training -Wno-missing-profile
+endif
+endif
 
 EXT=.TOS
 TARGET=STDOOM$(EXT)
@@ -155,6 +199,14 @@ OBJS=				\
 # video mode code.
 SIDECART_OBJS=$(OBJDIR)/sidecart_c2p.o $(OBJDIR)/sidecart_md.o $(OBJDIR)/sidecart_stubs.o
 OBJSTT=$(patsubst %.o,%.tt.o,$(filter-out $(SIDECART_OBJS),$(OBJS))) $(OBJDIR)/atari_vmode.tt.o
+# PGO=gen: pgo.c writes the profile when a benchmark's demo ends
+ifeq ($(PGO),gen)
+OBJSTT+=$(OBJDIR)/pgo.tt.o
+endif
+# The box C2P's loops are top-level asm, which an LTO object only holds as
+# gcc's intermediate code until the link: compiled without LTO, so
+# C2P_CACHE_CHECK can measure them in the object
+$(OBJDIR)/atari_c2p.tt.o: OPTFLAGS:=$(filter-out -flto%,$(OPTFLAGS))
 
 all:	 $(DISTDIR)/$(TARGET) $(DISTDIR)/$(TARGETTT)
 
@@ -170,9 +222,9 @@ $(DISTDIR)/$(TARGET):	$(OBJS) | $(DISTDIR)
 	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDLIBS)
 
 # The 8-plane box C2P's loops must fit the 68030's 256-byte instruction
-# cache at any alignment: at most 240 bytes from _NAME_cache0 to
-# _NAME_cache1 (atari_c2p.c). The assembler cannot check it itself.
-C2P_CACHE_CHECK = m68k-atari-mint-nm -t d $(1) | awk \
+# cache at any alignment: at most 240 bytes from NAME_cache0 to
+# NAME_cache1 (atari_c2p.c). The assembler cannot check it itself.
+C2P_CACHE_CHECK = $(NM) -t d $(1) | awk \
 	'/_cache0$$/ { a[substr($$3, 1, length($$3) - 7)] = $$1 } \
 	 /_cache1$$/ { n = substr($$3, 1, length($$3) - 7); s = $$1 - a[n]; \
 	   if (s > 240) { print "*** " n ": " s " bytes, over 240"; bad = 1 } } \

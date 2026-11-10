@@ -271,6 +271,9 @@ make -C sidecart recttest   # builds sidecart/tests/RECTTEST.TOS
 make                  # dist/STDOOM.TOS + dist/TTDOOM.TOS
 make stdoom           # dist/STDOOM.TOS
 make ttdoom           # dist/TTDOOM.TOS
+make ttdoom TOOLCHAIN=mintelf  # dist/mintelf/TTDOOM.TOS, built with gcc 13
+make ttdoom TOOLCHAIN=mintelf LTO=1  # dist/mintelf-lto/TTDOOM.TOS
+tools/bench/pgo.sh LABEL       # gcc 13 + LTO + PGO, tmp/bench/bin/LABEL.TOS
 make clean            # build/ and those programs (the WADs in dist/ stay)
 
 # TTDOOM benchmarks (Hatari, see "Testing in Hatari"): baseline vs working tree
@@ -619,6 +622,51 @@ play (about 4 tics a frame) that makes TT low ~150 -> ~106 ms (6.6 ->
   Hatari.
 - **-O2 times the same as -O3; -Os is 7% slower.**
 
+### gcc 13: LTO and PGO (TTDOOM)
+
+- **Toolchain.** `make ttdoom TOOLCHAIN=mintelf` builds with gcc 13.3
+  (`m68k-atari-mintelf`, in atarist-toolkit-docker from its `mintelf`
+  branch: until that image is published, build it and pass
+  `STCMD_IMAGE_TAG`). Each variant has its own `build/` and `dist/` folder
+  (`mintelf`, `mintelf-lto`, `mintelf-lto-pgo`); the default stays gcc
+  4.6.4, byte for byte. It links fdlibm (`-lm`: the vendored `src/deps`
+  libm.a are a.out), and ELF C symbols have no leading underscore, so asm
+  names them through `__USER_LABEL_PREFIX__` (`C2P8B_SYM`). It defines
+  `_GNU_SOURCE`: MiNTLib's headers hide `usleep`, `strcasecmp` and
+  `strupr` under `-std=c99`, and gcc 14 on rejects implicit declarations.
+- **LTO=1** inlines across files. `atari_c2p.c` is compiled without it:
+  an LTO object holds its top-level asm only as intermediate code, where
+  `C2P_CACHE_CHECK` can't measure the loops.
+- **PGO:** `tools/bench/pgo.sh LABEL` builds with `PGO=gen`, runs the
+  training timedemos (demo1 and demo2, low and high; demo3 stays unseen),
+  merges the profiles and rebuilds with `PGO=use`. How the profile gets
+  out of TOS: gcc's exit-time writer wants one long-named file per object
+  (TOS has 8.3 names), and `I_Error` waits for a key before exiting, so
+  the objects register their counters in a `gcov_info` section
+  (`-fprofile-info-section`) and `src/pgo.c` writes them as one stream,
+  `PGO.DAT`, when the bench patch's demo ends (`pgo_dump_hook`).
+  `gcov-tool merge-stream` turns the streams into `.gcda` files beside the
+  objects, and `gcdasum.py` writes in the whole-program summary the stream
+  leaves out (with `runs=0` gcc ignores a profile, and with LTO crashes).
+  No value profiling (its counters are thread-local, which a TOS program
+  can't link), and `-fprofile-correction` (the sound VBL's counters run on
+  while the profile is written).
+- **Results** (Hatari, ms a frame; demo hashes unchanged, `-mixtest` and
+  `-c2ptest` pass):
+
+  |                    | gcc 4.6.4 | gcc 13 | + LTO | + LTO + PGO |
+  | ------------------ | --------- | ------ | ----- | ----------- |
+  | TT low, demo1      | 86.6      | 85.3   | 83.7  | 81.8        |
+  | TT low, demo2      | 92.3      | 91.3   | 88.5  | 86.6        |
+  | TT low, demo3      | 101.8     | 100.5  | 96.4  | 94.4        |
+  | TT high, demo1     | 127.7     | 126.0  | 123.4 | 120.9       |
+  | Falcon VGA low     | 194.7     | 196.5  | 193.4 | 184.9       |
+  | Game logic a tic   | 7.3       | 6.7    | 6.9   | 6.4         |
+
+  LTO + PGO: 5-7% a timedemo frame (demo3, which PGO didn't train on,
+  gains the most), about 9% in real play (TT low ~106 -> ~97 ms). Only the
+  C side gains: the drawers, C2P and mixer are asm.
+
 ### Possible follow-ups (TTDOOM)
 
 - **Time on real hardware.** Everything above was measured in Hatari, whose
@@ -642,14 +690,24 @@ play (about 4 tics a frame) that makes TT low ~150 -> ~106 ms (6.6 ->
   instructions) and cost columns nothing (`columnofs`), but spans,
   patches, wipes, the automap and screenshots would all need the order,
   and a span loop absorbing it doesn't fit the instruction cache.
-- **Next phase, the toolchain.** gcc 4.6.4 (a.out, no LTO) is the limit on
-  the C side: a gcc 13+ `m68k-atari-mintelf` toolchain in
-  atarist-toolkit-docker, LTO (cross-file inlining of FixedDiv,
-  `R_PointToAngle`, `P_AproxDistance`), fastcall multilibs of MiNTLib or
-  libcmini, libgcc and libm for `-mfastcall` (`c2p8_box*` and
-  `sidecart_stubs.S` would need register entries; the current toolchain
-  has no fastcall multilib), PGO under Hatari, ELF symbols Hatari can read,
-  and vasm modules for the drawers and C2P.
+- **The toolchain, what's left** (gcc 13, LTO and PGO: see above): PGO for
+  releases (the profile hook is in the bench patch, and CI builds with gcc
+  4.6.4); value profiling (needs thread-local storage in a TOS program);
+  tuning flags for gcc 13; vasm modules for the drawers and C2P.
+- **`-mfastcall`: measured, not adopted.** Vincent Rivière's gcc 4.6.4 and
+  13.3 (the toolkit's) don't have it; Thorsten Otto's Crossmint gcc does,
+  with fastcall builds of libgcc, MiNTLib and fdlibm (what upstream STDOOM
+  uses). With his gcc 15.2 + LTO under Hatari, `FASTCALL=1` gained 1-1.5%
+  (TT low demo1 83.9 -> 83.3 ms, demo3 97.1 -> 95.6, high 125.0 -> 123.0),
+  and gcc 15 was a little slower than gcc 13, so the net gain over gcc 13
+  + LTO was under 1%. Against it: his toolchain installs where Vincent's
+  gcc 13 does (one or the other in the toolkit), is prebuilt for x86_64
+  only, and his `m68020-60` MiNTLib runs FPU instructions in `sscanf`
+  (TTDOOM's config), crashing a Falcon without an FPU. Kept, so a fastcall
+  toolchain still builds: `FASTCALL=1` gives its own build folders, and the
+  C2P box loops are `cdecl` under `__FASTCALL__` (their asm reads the
+  stack; gcc's fastcall passes pointers in a0/a1 and integers in d0-d2).
+  STDOOM would also need `sidecart_stubs.S` changed.
 - **Smaller wins left:** `R_MapStagedSpans` still misses the instruction
   cache a quarter of the time (gcc uses `bfextu` for the span set-up's
   6-bit fields); the per-column `divu.l` for `iscale`; `P_CrossSubsector`

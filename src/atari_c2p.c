@@ -8008,9 +8008,15 @@ C2P8_MERGE_FN(c2p8_384x4, 384, 4)
 // SKIPS 16 (a row's end to the next row's source), DSKIP 20 (the same for
 // the destination), CORR 24 (a1's move after a row's first group: from the
 // scratch for the first row, DSKIP after), GM2 28 (groups - 2 with the
-// high word set, or 0 for a box one group wide).
-void c2p8_box1(const unsigned char *src, long src_pitch, unsigned char *dst, long dst_pitch, long groups, long rows);
-void c2p8_box2(const unsigned char *src, long src_pitch, unsigned char *dst, long dst_pitch, long groups, long rows);
+// high word set, or 0 for a box one group wide). With -mfastcall (which
+// passes arguments in registers) they keep the stack: C2P8B_CDECL.
+#ifdef __FASTCALL__
+#define C2P8B_CDECL __attribute__((cdecl))
+#else
+#define C2P8B_CDECL
+#endif
+void C2P8B_CDECL c2p8_box1(const unsigned char *src, long src_pitch, unsigned char *dst, long dst_pitch, long groups, long rows);
+void C2P8B_CDECL c2p8_box2(const unsigned char *src, long src_pitch, unsigned char *dst, long dst_pitch, long groups, long rows);
 
 #define C2P8B_M(sh, back, ra, rb, mask) \
     "	move.l	" rb ",%d7\n" \
@@ -8049,10 +8055,15 @@ void c2p8_box2(const unsigned char *src, long src_pitch, unsigned char *dst, lon
     "	move.l	%d0,%a6\n"
 #define C2P8B_S1(r) "	move.l	" r ",(%a1)+\n"
 #define C2P8B_S2(r) "	move.l	" r ",(%a2)+\n"
+// A C name as the assembler sees it: "_name" with gcc 4.6.4 (a.out), "name"
+// with gcc 13 (m68k-atari-mintelf)
+#define C2P8B_STR2(x) #x
+#define C2P8B_STR(x) C2P8B_STR2(x)
+#define C2P8B_SYM(name) C2P8B_STR(__USER_LABEL_PREFIX__) name
 #define C2P8B_FUNC(name, G, DSTEP2, A2SET, A2FIX, DRAIN) \
     "	.even\n" \
-    "	.globl	_" name "\n" \
-    "_" name ":\n" \
+    "	.globl	" C2P8B_SYM(name) "\n" \
+    C2P8B_SYM(name) ":\n" \
     "	movem.l	%d2-%d7/%a2-%a6,-(%sp)\n" \
     "	lea	-32(%sp),%sp\n" \
     "	move.l	#0x0F0F0F0F,%d4\n" \
@@ -8081,7 +8092,7 @@ void c2p8_box2(const unsigned char *src, long src_pitch, unsigned char *dst, lon
     "	move.l	%sp,%a1\n" \
     A2SET \
     "	moveq	#0,%d6\n" \
-    "_" name "_cache0:\n" \
+    C2P8B_SYM(name) "_cache0:\n" \
     "1:\n" G \
     "	dbra	%d6,1b\n" \
     "	tst.l	%d6\n" \
@@ -8096,7 +8107,7 @@ void c2p8_box2(const unsigned char *src, long src_pitch, unsigned char *dst, lon
     "	move.l	20(%sp),24(%sp)\n" \
     "	moveq	#0,%d6\n" \
     "	bra.w	1b\n" \
-    "_" name "_cache1:\n" \
+    C2P8B_SYM(name) "_cache1:\n" \
     "9:\n" DRAIN \
     "	lea	32(%sp),%sp\n" \
     "	movem.l	(%sp)+,%d2-%d7/%a2-%a6\n" \
@@ -8149,8 +8160,8 @@ static void c2p8_box(unsigned char *out, const unsigned char *in, short in_pitch
 // rows (tools/bench, -c2ptest) and by decoding pages of a timedemo
 // (pagecheck.py). Only for rows nothing else drew in (outside the dirty
 // box): HUD text, the pause sign and wipes are full resolution.
-void c2p8_pairbox1(const unsigned char *src, long src_pitch, unsigned char *dst, long dst_pitch, long groups, long rows);
-void c2p8_pairbox2(const unsigned char *src, long src_pitch, unsigned char *dst, long dst_pitch, long groups, long rows);
+void C2P8B_CDECL c2p8_pairbox1(const unsigned char *src, long src_pitch, unsigned char *dst, long dst_pitch, long groups, long rows);
+void C2P8B_CDECL c2p8_pairbox2(const unsigned char *src, long src_pitch, unsigned char *dst, long dst_pitch, long groups, long rows);
 
 // Each bit of z twice: z takes its even bits doubled, b its odd bits
 #define C2P8P_DOUBLE(z, b) \

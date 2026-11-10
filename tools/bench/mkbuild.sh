@@ -12,10 +12,15 @@
 # (src/atarist-sfp004, lib/xpad) copied from the working tree.
 #
 # BENCH is the work folder: tmp/bench by default (tmp/ is not in git).
+# TOOLCHAIN=mintelf builds with gcc 13 (the Makefile's TOOLCHAIN) instead of
+# gcc 4.6.4; with it, LTO=1, FASTCALL=1 and PGO=gen|use go to the Makefile
+# too (PGO: pgo.sh).
 set -eo pipefail
 LABEL=$1
 SRC=${2:-}
 TARGET=${3:-ttdoom}
+TOOLCHAIN=${TOOLCHAIN:-mint}
+MAKEVARS="TOOLCHAIN=$TOOLCHAIN${LTO:+ LTO=$LTO}${FASTCALL:+ FASTCALL=$FASTCALL}${PGO:+ PGO=$PGO}"
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 BENCH=${BENCH:-$REPO/tmp/bench}
@@ -35,7 +40,15 @@ python3 -I "$HERE/benchpatch.py" "$T"
 cd "$T"
 export STCMD_NO_TTY=1
 OUT=TTDOOM.TOS; [ "$TARGET" = stdoom ] && OUT=STDOOM.TOS
-stcmd make "$TARGET" > "$BENCH/build_$LABEL.log" 2>&1 || { tail -30 "$BENCH/build_$LABEL.log"; exit 1; }
-cp "dist/$OUT" "$BENCH/bin/$LABEL.TOS"
-stcmd m68k-atari-mint-nm -n "dist/$OUT" 2>/dev/null | grep -v ST_WORKING > "$BENCH/nm_$LABEL.txt"
+# The Makefile's dist folder for this build (VARIANT)
+DIST=dist
+if [ "$TOOLCHAIN" != mint ]; then
+  DIST=dist/$TOOLCHAIN
+  [ "${LTO:-}" = 1 ] && DIST=$DIST-lto
+  [ "${FASTCALL:-}" = 1 ] && DIST=$DIST-fastcall
+  [ -n "${PGO:-}" ] && DIST=$DIST-pgo
+fi
+stcmd make "$TARGET" $MAKEVARS > "$BENCH/build_$LABEL.log" 2>&1 || { tail -30 "$BENCH/build_$LABEL.log"; exit 1; }
+cp "$DIST/$OUT" "$BENCH/bin/$LABEL.TOS"
+stcmd m68k-atari-$TOOLCHAIN-nm -n "$DIST/$OUT" 2>/dev/null | grep -v ST_WORKING > "$BENCH/nm_$LABEL.txt"
 echo "built $BENCH/bin/$LABEL.TOS"
