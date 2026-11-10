@@ -1156,7 +1156,8 @@ typedef struct
 } state_t;
 
 extern state_t	states[NUMSTATES];
-extern char *sprnames[NUMSPRITES];
+// NULL-terminated: R_InitSpriteDefs counts the names up to the NULL
+extern char *sprnames[NUMSPRITES+1];
 
 
 

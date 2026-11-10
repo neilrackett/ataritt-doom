@@ -37,7 +37,9 @@ rcsid[] = "$Id: info.c,v 1.3 1997/01/26 07:45:00 b1 Exp $";
 
 #include "p_mobj.h"
 char *dummy_for_alignment="AA";
-char *sprnames[NUMSPRITES] = {
+// id's list had no NULL at the end, so R_InitSpriteDefs counted on past
+// it, into whatever the linker put next (with LTO, not a NULL)
+char *sprnames[NUMSPRITES+1] = {
     "TROO\000","SHTG\000","PUNG\000","PISG\000","PISF\000","SHTF\000","SHT2\000","CHGG\000","CHGF\000","MISG\000",
     "MISF\000","SAWG\000","PLSG\000","PLSF\000","BFGG\000","BFGF\000","BLUD\000","PUFF\000","BAL1\000","BAL2\000",
     "PLSS\000","PLSE\000","MISL\000","BFS1\000","BFE1\000","BFE2\000","TFOG\000","IFOG\000","PLAY\000","POSS\000",
@@ -51,7 +53,8 @@ char *sprnames[NUMSPRITES] = {
     "POL3\000","POL1\000","POL6\000","GOR2\000","GOR3\000","GOR4\000","GOR5\000","SMIT\000","COL1\000","COL2\000",
     "COL3\000","COL4\000","CAND\000","CBRA\000","COL6\000","TRE1\000","TRE2\000","ELEC\000","CEYE\000","FSKU\000",
     "COL5\000","TBLU\000","TGRN\000","TRED\000","SMBT\000","SMGT\000","SMRT\000","HDB1\000","HDB2\000","HDB3\000",
-    "HDB4\000","HDB5\000","HDB6\000","POB1\000","POB2\000","BRS1\000","TLMP\000","TLP2\000"
+    "HDB4\000","HDB5\000","HDB6\000","POB1\000","POB2\000","BRS1\000","TLMP\000","TLP2\000",
+    NULL
 };
 
 

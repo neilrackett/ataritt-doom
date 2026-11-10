@@ -526,6 +526,11 @@ Anything that reads or publishes Xpad: read
 - **gcc 4.6 for m68k:** inline asm can't take more data registers than are
   free (8 less the clobbers); fold flags into a CCR value rather than add
   an operand. A register variable (`register long x asm("d5")`) pins one.
+- **`sprnames` ends in a NULL.** id's list had none, and `R_InitSpriteDefs`
+  counts the names up to a NULL: it read past the array into whatever the
+  linker put next. With LTO that wasn't a NULL, and TTDOOM crashed in
+  `R_InitSprites` reading through `$FFFFFFFF`. A layout change can expose
+  any such overrun: suspect one first when only a new layout crashes.
 
 ### Testing in Hatari
 
