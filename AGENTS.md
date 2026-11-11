@@ -596,6 +596,17 @@ and up to six parallel runs are fine.
 - **Real play** runs about 35/fps tics a frame where the timedemo runs one,
   so a frame is R / (1 - T/28.6 ms), R the timedemo frame less a tic (T,
   from `nodraw`).
+- **Real hardware:** `tools/bench/ttkit.sh` builds a kit in `tmp/ttkit`:
+  the three dist builds as `GCC4.TTP`, `LTO.TTP` and `PGO.TTP`, the WAD,
+  `LOW.CFG`/`HIGH.CFG` (size 10, for `-config`) and `BENCH.TOS`
+  (`ttbench.c`), which runs `BENCH.TXT`'s timedemos unattended and writes
+  `RESULTS.TXT`. Each run's stdout and stderr go to `RUNn.LOG` and its
+  stdin comes from an empty file, so `I_Error`'s `getchar()` returns at
+  once. Each program loads with its text on 16 bytes (`+N` in `BENCH.TXT`
+  for N past): a pad block in front of the largest free block, corrected
+  after a trial load (`Pexec` mode 3), since TOS puts the copy of the
+  environment there first. The `BENCH.TXT` notes are the same runs under
+  Hatari (`BENCH.TOS` on the TT setup above).
 
 ### Where the time goes (Hatari, size 10, 600-tic timedemo)
 
