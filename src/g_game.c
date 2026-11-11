@@ -70,6 +70,7 @@ rcsid[] = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 
 #include "g_game.h"
 #include "i_xpad.h"
+#include "pgo.h"
 
 
 #define SAVEGAMESIZE	0x2c000
@@ -1640,6 +1641,9 @@ void G_TimeDemo (char* name)
 } 
  
  
+// Set by a profiling build (pgo.h)
+void (*pgo_dump_hook) (void);
+
 /* 
 =================== 
 = 
@@ -1657,6 +1661,8 @@ boolean G_CheckDemoStatus (void)
     if (timingdemo) 
     { 
 	endtime = I_GetTime (); 
+	if (pgo_dump_hook)
+	    pgo_dump_hook ();
 	I_Error ("timed %i gametics in %i realtics",gametic 
 		 , endtime-starttime); 
     } 

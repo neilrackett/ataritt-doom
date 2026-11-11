@@ -274,6 +274,7 @@ make ttdoom           # dist/TTDOOM.TOS
 make ttdoom TOOLCHAIN=mintelf  # dist/mintelf/TTDOOM.TOS, built with gcc 13
 make ttdoom TOOLCHAIN=mintelf LTO=1  # dist/mintelf-lto/TTDOOM.TOS
 tools/bench/pgo.sh LABEL       # gcc 13 + LTO + PGO, tmp/bench/bin/LABEL.TOS
+tools/bench/pgo.sh --dist      # the same from this tree: dist/mintelf-lto-pgo/TTDOOM.TOS
 make clean            # build/ and those programs (the WADs in dist/ stay)
 
 # TTDOOM benchmarks (Hatari, see "Testing in Hatari"): baseline vs working tree
@@ -637,14 +638,21 @@ play (about 4 tics a frame) that makes TT low ~150 -> ~106 ms (6.6 ->
 - **LTO=1** inlines across files. `atari_c2p.c` is compiled without it:
   an LTO object holds its top-level asm only as intermediate code, where
   `C2P_CACHE_CHECK` can't measure the loops.
-- **PGO:** `tools/bench/pgo.sh LABEL` builds with `PGO=gen`, runs the
-  training timedemos (demo1 and demo2, low and high; demo3 stays unseen),
-  merges the profiles and rebuilds with `PGO=use`. How the profile gets
-  out of TOS: gcc's exit-time writer wants one long-named file per object
-  (TOS has 8.3 names), and `I_Error` waits for a key before exiting, so
-  the objects register their counters in a `gcov_info` section
-  (`-fprofile-info-section`) and `src/pgo.c` writes them as one stream,
-  `PGO.DAT`, when the bench patch's demo ends (`pgo_dump_hook`).
+- **PGO:** `tools/bench/pgo.sh` builds with `PGO=gen`, runs the training
+  timedemos (demo1 and demo2, low and high; demo3 stays unseen), merges
+  the profiles and rebuilds with `PGO=use`: `pgo.sh LABEL` for a benchmark
+  build (demos end at tic 600), `pgo.sh --dist` for this tree as it is,
+  the demos played in full, into `dist/mintelf-lto-pgo/TTDOOM.TOS`. The
+  profiling build runs the same code as the release: the game source has
+  two hooks (`src/pgo.h`), null unless `src/pgo.c`, which only `PGO=gen`
+  links, sets them. `main` takes its arguments from `ARGS.TXT` (Hatari
+  can't pass them to an autostarted program), and `G_CheckDemoStatus`
+  writes the profile when a timedemo ends. How the profile gets out of
+  TOS: gcc's exit-time writer wants one long-named file per object (TOS
+  has 8.3 names), and `I_Error` waits for a key before exiting, so the
+  objects register their counters in a `gcov_info` section
+  (`-fprofile-info-section`) and `pgo.c` writes them as one stream,
+  `PGO.DAT`.
   `gcov-tool merge-stream` turns the streams into `.gcda` files beside the
   objects, and `gcdasum.py` writes in the whole-program summary the stream
   leaves out (with `runs=0` gcc ignores a profile, and with LTO crashes).
@@ -666,6 +674,11 @@ play (about 4 tics a frame) that makes TT low ~150 -> ~106 ms (6.6 ->
   LTO + PGO: 5-7% a timedemo frame (demo3, which PGO didn't train on,
   gains the most), about 9% in real play (TT low ~106 -> ~97 ms). Only the
   C side gains: the drawers, C2P and mixer are asm.
+
+  The `dist` builds over whole demos (TT, size 10; `pgo.sh --dist` trained
+  on demos 1 and 2), gcc 4.6.4 -> + LTO -> + LTO + PGO: demo1 low 86.9 ->
+  85.2 -> 82.9 ms, high 131.9 -> 128.6 -> 124.5; demo3 low 87.7 -> 85.9
+  -> 83.5. Every demo plays to its last tic.
 
 ### Possible follow-ups (TTDOOM)
 
@@ -690,9 +703,9 @@ play (about 4 tics a frame) that makes TT low ~150 -> ~106 ms (6.6 ->
   instructions) and cost columns nothing (`columnofs`), but spans,
   patches, wipes, the automap and screenshots would all need the order,
   and a span loop absorbing it doesn't fit the instruction cache.
-- **The toolchain, what's left** (gcc 13, LTO and PGO: see above): PGO for
-  releases (the profile hook is in the bench patch, and CI builds with gcc
-  4.6.4); value profiling (needs thread-local storage in a TOS program);
+- **The toolchain, what's left** (gcc 13, LTO and PGO: see above): releases
+  built with gcc 13 (CI builds with gcc 4.6.4, and the PGO training needs
+  Hatari and a TOS image: `pgo.sh --dist` runs locally); value profiling (needs thread-local storage in a TOS program);
   tuning flags for gcc 13; vasm modules for the drawers and C2P.
 - **`-mfastcall`: measured, not adopted.** Vincent Rivière's gcc 4.6.4 and
   13.3 (the toolkit's) don't have it; Thorsten Otto's Crossmint gcc does,

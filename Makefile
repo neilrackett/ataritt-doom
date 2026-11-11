@@ -9,9 +9,10 @@
 #   make ttdoom TOOLCHAIN=mintelf
 #                     dist/mintelf/TTDOOM.TOS, built with gcc 13; add LTO=1
 #                     for link-time optimisation (dist/mintelf-lto)
-#   tools/bench/pgo.sh LABEL
-#                     gcc 13, LTO and profile-guided optimisation (PGO=gen,
-#                     then PGO=use), trained on the benchmark's timedemos
+#   tools/bench/pgo.sh --dist
+#                     dist/mintelf-lto-pgo/TTDOOM.TOS: gcc 13, LTO and
+#                     profile-guided optimisation (PGO=gen, then PGO=use),
+#                     trained on timedemos under Hatari
 #   make sidecart     the DOOM Accelerator firmware and its test apps
 #                     (sidecart/Makefile), e.g. make sidecart debug
 #

@@ -15,8 +15,6 @@
 #   channel states (MIXTEST, the number of mismatches).
 # - -c2ptest: c2p8_pairbox1/2 against c2p8_box1/2 on random paired rows
 #   (C2PTEST, the number of mismatches).
-# - In a PGO=gen build (pgo.c, pgo.sh), the demo's end also writes the
-#   profile to PGO.DAT.
 import sys, re, pathlib
 root = pathlib.Path(sys.argv[1])
 p = root / "src/i_main.c"
@@ -91,16 +89,8 @@ s = s.replace(old, """    if (gametic == 1)
 	fprintf (stderr, "BENCH STATE tic %d mobjs %d rnd %d hash %08lx\\n",
 		 gametic, n, prndindex, h);
 	fflush (stderr);
-	// A PGO=gen build (pgo.c) writes its profile now
-	{
-	    extern void (*pgo_dump_hook) (void);
-	    if (pgo_dump_hook)
-		pgo_dump_hook ();
-	}
     }
     if (*demo_p == DEMOMARKER || gametic >= 600) """, 1)
-# Set by pgo.c's constructor in a PGO=gen build, else null
-s += "\nvoid (*pgo_dump_hook) (void);\n"
 p.write_text(s)
 
 p = root / "src/i_video.c"
