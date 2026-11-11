@@ -912,8 +912,13 @@ void I_ShutdownSound(void)
   if (!nosfx || !nomusic) I_SoundDelTimer();
 #endif
   
-  *pDmaSndCtrl = DMASND_CTRL_OFF;
-  if (sndbuffers) Mfree(sndbuffers);
+  // Only if DMA sound was started: I_Error calls this too, maybe before
+  // I_InitSound, and an ST without DMA sound has no such register
+  if (sndbuffers) {
+    *pDmaSndCtrl = DMASND_CTRL_OFF;
+    Mfree(sndbuffers);
+    sndbuffers = NULL;
+  }
 
 #endif
 
@@ -1185,6 +1190,8 @@ int I_SoundSetTimer( int duration_of_tick )
 // Remove the interrupt. Set duration to zero.
 void I_SoundDelTimer()
 {
+  if (!vbl_installed)
+    return;
   *pVblVec = pOldVblVec;
   vbl_installed = false;
 }

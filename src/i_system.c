@@ -304,6 +304,10 @@ void I_Error (char *error, ...)
 	G_CheckDemoStatus();
 
     D_QuitNetGame ();
+    // Give the VBL back to TOS and stop DMA sound: left installed, the
+    // sound VBL runs on in the freed program and hangs the machine once
+    // the next program loads over it (as after every timedemo)
+    I_ShutdownSound();
     I_ShutdownGraphics();
     atari_restore_megaste_turbo();
     I_RestoreCaches();

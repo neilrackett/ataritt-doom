@@ -535,6 +535,12 @@ Anything that reads or publishes Xpad: read
   linker put next. With LTO that wasn't a NULL, and TTDOOM crashed in
   `R_InitSprites` reading through `$FFFFFFFF`. A layout change can expose
   any such overrun: suspect one first when only a new layout crashes.
+- **`I_Error` gives the VBL back** (`I_ShutdownSound`, which only restores
+  `$70` if the sound VBL is installed and only touches the DMA register if
+  DMA sound was started: `I_Error` can run before `I_InitSound`, and an ST
+  has no such register). Every timedemo ends in `I_Error`, which used to
+  leave the sound VBL running in the freed program: the machine hung once
+  the next program loaded over it.
 
 ### Testing in Hatari
 
