@@ -288,12 +288,23 @@ make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION
 ## Release
 
 `.github/workflows/release.yml`: every push to `main` (except prose,
-`docs/` and `sidecart/` only) builds `dist/TTDOOM.TOS` and
-`dist/STDOOM.TOS` with `stcmd make ttdoom stdoom`, moves the lightweight
+`docs/` and `sidecart/` only) builds `dist/STDOOM.TOS` (`stcmd make
+stdoom`, gcc 4.6.4) and TTDOOM with gcc 13 and LTO (`stcmd make ttdoom
+TOOLCHAIN=mintelf LTO=1`, `dist/mintelf-lto/TTDOOM.TOS`; no PGO, whose
+training needs Hatari, a TOS image and the WAD), moves the lightweight
 `latest` tag onto the commit through the API, and replaces those two on the
 hand-written `latest` release with `gh release upload --clobber`: no title
 or notes change, and no other asset is added or touched. It checks out only the `src/atarist-sfp004` and
 `lib/xpad` submodules, not the Pico SDK. No version tags yet.
+
+The toolkit image is `neilrackett/atarist-toolkit-docker-x86_64:mintelf`
+(`DOCKER_ACCOUNT` and the installer's tag argument), until upstream's has
+gcc 13: upstream's published image plus gcc 13 as the toolkit's `mintelf`
+branch installs it (`tools/toolkit/Dockerfile`, which says how to rebuild
+and push it). Not built from the toolkit's own Dockerfile, which no longer
+builds (vasm and vlink have left `sun.hasenbraten.de`). Checked when made:
+its gcc 4.6.4 builds of both programs are byte-identical to upstream's
+image's, and its gcc 13 + LTO TTDOOM to the arm64 image's.
 
 ## Xpad (gamepads)
 
@@ -727,9 +738,9 @@ play (about 4 tics a frame) that makes TT low ~150 -> ~106 ms (6.6 ->
   instructions) and cost columns nothing (`columnofs`), but spans,
   patches, wipes, the automap and screenshots would all need the order,
   and a span loop absorbing it doesn't fit the instruction cache.
-- **The toolchain, what's left** (gcc 13, LTO and PGO: see above): releases
-  built with gcc 13 (CI builds with gcc 4.6.4, and the PGO training needs
-  Hatari and a TOS image: `pgo.sh --dist` runs locally); value profiling (needs thread-local storage in a TOS program);
+- **The toolchain, what's left** (gcc 13, LTO and PGO: see above): PGO for
+  the release (CI builds TTDOOM with gcc 13 + LTO; the PGO training needs
+  Hatari, a TOS image and the WAD: `pgo.sh --dist` runs locally); value profiling (needs thread-local storage in a TOS program);
   tuning flags for gcc 13; vasm modules for the drawers and C2P.
 - **`-mfastcall`: measured, not adopted.** Vincent Rivière's gcc 4.6.4 and
   13.3 (the toolkit's) don't have it; Thorsten Otto's Crossmint gcc does,

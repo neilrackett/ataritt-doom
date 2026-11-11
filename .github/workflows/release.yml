@@ -59,11 +59,22 @@ jobs:
 
       - name: Install the Atari ST toolkit
         # Generates /usr/local/bin/stcmd, which runs the m68k build in a
-        # container.
-        run: curl -sL https://github.com/sidecartridge/atarist-toolkit-docker/releases/latest/download/install_atarist_toolkit_docker.sh | bash
+        # container. The image is upstream's plus gcc 13
+        # (m68k-atari-mintelf), as sidecartridge/atarist-toolkit-docker
+        # PR #17 adds it: tools/toolkit/Dockerfile. Back to upstream's
+        # image once it has gcc 13.
+        env:
+          DOCKER_ACCOUNT: neilrackett
+        run: curl -sL https://github.com/sidecartridge/atarist-toolkit-docker/releases/latest/download/install_atarist_toolkit_docker.sh | bash -s -- mintelf
 
       - name: Build
-        run: stcmd make ttdoom stdoom
+        # STDOOM with gcc 4.6.4, as always. TTDOOM with gcc 13 and LTO,
+        # into dist/mintelf-lto/: without PGO, whose training timedemos
+        # need Hatari, a TOS image and the WAD (tools/bench/pgo.sh --dist
+        # builds that locally).
+        run: |
+          stcmd make stdoom
+          stcmd make ttdoom TOOLCHAIN=mintelf LTO=1
 
       - name: Move the latest tag onto this commit
         # The "latest" release is attached to this tag, so moving it
@@ -90,5 +101,5 @@ jobs:
         run: |
           gh release view latest >/dev/null 2>&1 \
             || { echo "No 'latest' release to upload to: create it by hand first."; exit 1; }
-          gh release upload latest dist/TTDOOM.TOS dist/STDOOM.TOS --clobber
+          gh release upload latest dist/mintelf-lto/TTDOOM.TOS dist/STDOOM.TOS --clobber
           echo "Published TTDOOM.TOS and STDOOM.TOS from $GITHUB_SHA to the latest release."
