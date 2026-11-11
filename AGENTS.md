@@ -541,6 +541,13 @@ Anything that reads or publishes Xpad: read
   has no such register). Every timedemo ends in `I_Error`, which used to
   leave the sound VBL running in the freed program: the machine hung once
   the next program loaded over it.
+- **Load alignment.** GEMDOS keeps blocks only even, so a block can start
+  2 bytes off a long, and then every long the 68030 reads from it takes two
+  bus cycles. `I_AllocAligned` puts the zone and `screens` on 16 bytes, but
+  the program itself loads wherever the free memory starts: 2 bytes off,
+  demo3 low ran 4.4% slower (gcc 4.6.4) or 1.4% (LTO + PGO) under Hatari.
+  Compare timings only at the same load alignment: the start-up line prints
+  where the zone and the program are.
 
 ### Testing in Hatari
 

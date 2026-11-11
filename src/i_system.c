@@ -25,6 +25,7 @@ rcsid[] = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp $";
 
 #include <mint/osbind.h>
 #include <mint/sysvars.h>
+#include <mint/basepage.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -156,6 +157,8 @@ int  I_GetHeapSize (void)
 #define ZONE_SPARE	(128*1024L)
 #endif
 
+static void *I_AllocAligned (long length);
+
 byte* I_ZoneBase (int*	size)
 {
     *size = ram_used;
@@ -177,11 +180,12 @@ byte* I_ZoneBase (int*	size)
     unsigned long memavail = Malloc(-1);
     printf("Memory available: %ld\n", memavail);
     printf("Trying to allocate %d bytes\n", *size);
-    unsigned long addr = (unsigned long) malloc (*size);
+    unsigned long addr = (unsigned long) I_AllocAligned (*size);
     if (!addr) {
         I_Error("Not enough memory available");
     } else if (addr >= (1L<<24)) {
-        printf("Fast RAM allocated at %08lx\n", addr);
+        printf("Fast RAM allocated at %08lx (program at %08lx)\n", addr,
+               (unsigned long) _base->p_tbase);
     } else if (addr >= (1L<<22)) {
         printf("Alt-RAM allocated at %06lx\n", addr);
     } else {
@@ -271,11 +275,23 @@ void I_EndRead(void)
 {
 }
 
+// malloc on a 16-byte boundary (never freed). GEMDOS only keeps blocks
+// even, so the zone and screens could start 2 bytes off a long: then every
+// long a 68030 reads from them takes two bus cycles, and whether they did
+// depended on what was allocated before (TTDOOM's timedemos ran 2-4%
+// slower from one launcher than another).
+static void *I_AllocAligned (long length)
+{
+    unsigned long mem = (unsigned long) malloc (length + 15);
+
+    return mem ? (void *) ((mem + 15) & ~15UL) : NULL;
+}
+
 byte*	I_AllocLow(int length)
 {
     byte*	mem;
-        
-    mem = (byte *)malloc (length);
+
+    mem = (byte *)I_AllocAligned (length);
     memset (mem,0,length);
     return mem;
 }
