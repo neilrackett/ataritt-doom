@@ -285,180 +285,301 @@ R_DrawSegTiers (const segtier_t* t, const segtier_t* end, const int low)
 	R_DrawColumns (segcols, c);
 }
 
-#define SEG_TIER(tier_yl, tier_yh, tier_tex, tier_mid) \
+// The seg loop in passes, each a loop of its own that mostly fits the
+// 68030's instruction cache, with the seg's state in locals (as one loop
+// it was 380 bytes for a textured column, and gcc reloaded a dozen globals
+// in each):
+// 1. R_SegMarkSolid / R_SegMarkTwoSided: each column's clipping, its
+//    marks in the floor and ceiling planes, and the tiers it finds.
+// 2. R_SegTierColumns: the texture column, light and scale of the columns
+//    that have a tier. Columns clipped away skip the multiplies and the
+//    divide the single loop did for every textured column.
+// 3. R_DrawSegTiers, as before.
+// The same values as id's loop: a column's scale is the seg's first plus
+// its step times the columns since, which is what adding the step each
+// column comes to.
+
+// The light table for a wall scale: LIGHT_INDEX (scale >> LIGHTSCALESHIFT),
+// clamped, from a table where that was a multiply
+static inline unsigned R_WallLightIndex (fixed_t scale)
+{
+    int		x = scale >> LIGHTSCALESHIFT;
+#if SCREENHEIGHT == 240
+    static const byte	lightindex[58] =
+    {
+	0, 0, 1, 2, 3, 4, 5, 5, 6, 7, 8, 9, 10, 10, 11, 12, 13, 14, 15, 15, 16, 17, 18, 19, 20, 20, 21, 22, 23, 24, 25, 25, 26, 27, 28, 29, 30, 30, 31, 32, 33, 34, 35, 35, 36, 37, 38, 39, 40, 40, 41, 42, 43, 44, 45, 45, 46, 47
+    };
+
+    return (unsigned) x >= 58 ? MAXLIGHTSCALE-1 : lightindex[x];
+#else
+    return (unsigned) x >= MAXLIGHTSCALE ? MAXLIGHTSCALE-1 : x;
+#endif
+}
+
+#define SEG_NOTE(tier_yl, tier_yh, tier_tex, tier_mid) \
     { \
 	t->x = x; \
 	t->yl = tier_yl; \
 	t->yh = tier_yh; \
 	t->tex = tier_tex; \
-	t->texturecolumn = texturecolumn; \
 	t->texturemid = tier_mid; \
-	t->colormap = colormap; \
-	t->iscale = iscale; \
 	t++; \
     }
 
-static inline __attribute__((always_inline)) void R_RenderSegLoopAt (const int low)
+// A column's clipping and plane marks, the same for both kinds of line
+#define SEG_MARK \
+	cc = ceilingclip[x]; \
+	fc = floorclip[x]; \
+ \
+	/* mark floor / ceiling areas */ \
+	yl = (tfrac+HEIGHTUNIT-1)>>HEIGHTBITS; \
+ \
+	/* no space above wall? */ \
+	if (yl < cc+1) \
+	    yl = cc+1; \
+ \
+	if (markc) \
+	{ \
+	    top = cc+1; \
+	    bottom = yl-1; \
+ \
+	    if (bottom >= fc) \
+		bottom = fc-1; \
+ \
+	    if (top <= bottom) \
+	    { \
+		ctop[x] = top; \
+		cbottom[x] = bottom; \
+	    } \
+	} \
+ \
+	yh = bfrac>>HEIGHTBITS; \
+ \
+	if (yh >= fc) \
+	    yh = fc-1; \
+ \
+	if (markf) \
+	{ \
+	    top = yh+1; \
+	    bottom = fc-1; \
+	    if (top <= cc) \
+		top = cc+1; \
+	    if (top <= bottom) \
+	    { \
+		ftop[x] = top; \
+		fbottom[x] = bottom; \
+	    } \
+	}
+
+#define SEG_MARK_LOCALS \
+    int			x = rw_x; \
+    const int		stopx = rw_stopx; \
+    fixed_t		tfrac = topfrac; \
+    fixed_t		bfrac = bottomfrac; \
+    const fixed_t	tstep = topstep; \
+    const fixed_t	bstep = bottomstep; \
+    const int		markc = markceiling; \
+    const int		markf = markfloor; \
+    byte* const		ctop = markc ? ceilingplane->top : NULL; \
+    byte* const		cbottom = markc ? ceilingplane->bottom : NULL; \
+    byte* const		ftop = markf ? floorplane->top : NULL; \
+    byte* const		fbottom = markf ? floorplane->bottom : NULL; \
+    short		cc; \
+    short		fc; \
+    short		yl; \
+    short		yh; \
+    short		top; \
+    short		bottom
+
+// A single sided line's columns: its tiers from t on. Returns their end.
+static __attribute__((noinline)) segtier_t* R_SegMarkSolid (segtier_t* t)
 {
-    angle_t		angle;
-    unsigned		index;
-    short		yl;
-    short		yh;
-    short		mid;
-    fixed_t		texturecolumn = 0;
-    short		top;
-    short		bottom;
-    lighttable_t*	colormap = NULL;
-    fixed_t		iscale = 0;
-    segtier_t*		t = segtiers;
-    int			x = rw_x;
-    const int		stopx = rw_stopx;
-    fixed_t		scale = rw_scale;
-    fixed_t		tfrac = topfrac;
-    fixed_t		bfrac = bottomfrac;
-    fixed_t		phigh = pixhigh;
-    fixed_t		plow = pixlow;
+    SEG_MARK_LOCALS;
+    const short		tex = midtexture;
+    const fixed_t	texmid = rw_midtexturemid;
+    const short		vh = viewheight;
 
     for ( ; x < stopx ; x++)
     {
-	// mark floor / ceiling areas
-	yl = (tfrac+HEIGHTUNIT-1)>>HEIGHTBITS;
+	SEG_MARK
 
-	// no space above wall?
-	if (yl < ceilingclip[x]+1)
-	    yl = ceilingclip[x]+1;
-	
-	if (markceiling)
+	if (yl <= yh)
+	    SEG_NOTE (yl, yh, tex, texmid);
+	ceilingclip[x] = vh;
+	floorclip[x] = -1;
+
+	tfrac += tstep;
+	bfrac += bstep;
+    }
+    topfrac = tfrac;
+    bottomfrac = bfrac;
+    return t;
+}
+
+// A two sided line's
+static __attribute__((noinline)) segtier_t* R_SegMarkTwoSided (segtier_t* t)
+{
+    SEG_MARK_LOCALS;
+    short		mid;
+    const short		toptex = toptexture;
+    const short		bottomtex = bottomtexture;
+    const fixed_t	topmid = rw_toptexturemid;
+    const fixed_t	bottommid = rw_bottomtexturemid;
+    fixed_t		phigh = pixhigh;
+    fixed_t		plow = pixlow;
+    const fixed_t	phstep = pixhighstep;
+    const fixed_t	plstep = pixlowstep;
+
+    for ( ; x < stopx ; x++)
+    {
+	SEG_MARK
+
+	if (toptex)
 	{
-	    top = ceilingclip[x]+1;
-	    bottom = yl-1;
+	    // top wall
+	    mid = phigh>>HEIGHTBITS;
+	    phigh += phstep;
 
-	    if (bottom >= floorclip[x])
-		bottom = floorclip[x]-1;
+	    if (mid >= fc)
+		mid = fc-1;
 
-	    if (top <= bottom)
+	    if (mid >= yl)
 	    {
-		ceilingplane->top[x] = top;
-		ceilingplane->bottom[x] = bottom;
+		SEG_NOTE (yl, mid, toptex, topmid);
+		cc = mid;
 	    }
-	}
-		
-	yh = bfrac>>HEIGHTBITS;
-
-	if (yh >= floorclip[x])
-	    yh = floorclip[x]-1;
-
-	if (markfloor)
-	{
-	    top = yh+1;
-	    bottom = floorclip[x]-1;
-	    if (top <= ceilingclip[x])
-		top = ceilingclip[x]+1;
-	    if (top <= bottom)
-	    {
-		floorplane->top[x] = top;
-		floorplane->bottom[x] = bottom;
-	    }
-	}
-	
-	// texturecolumn and lighting are independent of wall tiers
-	if (segtextured)
-	{
-	    // calculate texture offset
-	    angle = (rw_centerangle + xtoviewangle[x])>>ANGLETOFINESHIFT;
-	    texturecolumn = rw_offset-FixedMul(finetangent[angle],rw_distance);
-	    texturecolumn >>= FRACBITS;
-	    // calculate lighting
-	    index = LIGHT_INDEX(scale>>LIGHTSCALESHIFT);
-
-	    if (index >=  MAXLIGHTSCALE )
-		index = MAXLIGHTSCALE-1;
-
-	    colormap = walllights[index];
-	    iscale = 0xffffffffu / (unsigned)scale;
-	}
-	
-	// draw the wall tiers
-	if (midtexture)
-	{
-	    // single sided line
-	    if (yl <= yh)
-		SEG_TIER (yl, yh, midtexture, rw_midtexturemid);
-	    ceilingclip[x] = viewheight;
-	    floorclip[x] = -1;
+	    else
+		cc = yl-1;
+	    ceilingclip[x] = cc;
 	}
 	else
 	{
-	    // two sided line
-	    if (toptexture)
+	    // no top wall
+	    if (markc)
 	    {
-		// top wall
-		mid = phigh>>HEIGHTBITS;
-		phigh += pixhighstep;
-
-		if (mid >= floorclip[x])
-		    mid = floorclip[x]-1;
-
-		if (mid >= yl)
-		{
-		    SEG_TIER (yl, mid, toptexture, rw_toptexturemid);
-		    ceilingclip[x] = mid;
-		}
-		else
-		    ceilingclip[x] = yl-1;
-	    }
-	    else
-	    {
-		// no top wall
-		if (markceiling)
-		    ceilingclip[x] = yl-1;
-	    }
-			
-	    if (bottomtexture)
-	    {
-		// bottom wall
-		mid = (plow+HEIGHTUNIT-1)>>HEIGHTBITS;
-		plow += pixlowstep;
-
-		// no space above wall?
-		if (mid <= ceilingclip[x])
-		    mid = ceilingclip[x]+1;
-		
-		if (mid <= yh)
-		{
-		    SEG_TIER (mid, yh, bottomtexture, rw_bottomtexturemid);
-		    floorclip[x] = mid;
-		}
-		else
-		    floorclip[x] = yh+1;
-	    }
-	    else
-	    {
-		// no bottom wall
-		if (markfloor)
-		    floorclip[x] = yh+1;
-	    }
-			
-	    if (maskedtexture)
-	    {
-		// save texturecol
-		//  for backdrawing of masked mid texture
-		maskedtexturecol[x] = texturecolumn;
+		cc = yl-1;
+		ceilingclip[x] = cc;
 	    }
 	}
-		
-	scale += rw_scalestep;
-	tfrac += topstep;
-	bfrac += bottomstep;
+		    
+	if (bottomtex)
+	{
+	    // bottom wall
+	    mid = (plow+HEIGHTUNIT-1)>>HEIGHTBITS;
+	    plow += plstep;
+
+	    // no space above wall?
+	    if (mid <= cc)
+		mid = cc+1;
+	    
+	    if (mid <= yh)
+	    {
+		SEG_NOTE (mid, yh, bottomtex, bottommid);
+		floorclip[x] = mid;
+	    }
+	    else
+		floorclip[x] = yh+1;
+	}
+	else
+	{
+	    // no bottom wall
+	    if (markf)
+		floorclip[x] = yh+1;
+	}
+
+	tfrac += tstep;
+	bfrac += bstep;
     }
-    rw_x = x;
-    rw_scale = scale;
     topfrac = tfrac;
     bottomfrac = bfrac;
     pixhigh = phigh;
     pixlow = plow;
+    return t;
+}
 
-    R_DrawSegTiers (segtiers, t, low);
+// A column's place across the wall's texture
+#define SEG_TEXTURECOLUMN(x) \
+    ((offset - FixedMul (finetangent[(centerangle + xtoviewangle[x]) \
+				     >>ANGLETOFINESHIFT], distance)) \
+     >> FRACBITS)
+
+// The texture column, light and scale of the tiers t to end, a seg's from
+// column x0, where its scale is scale0: worked out once a column.
+static __attribute__((noinline)) void
+R_SegTierColumns (segtier_t* t, const segtier_t* end, int x0, fixed_t scale0)
+{
+    const fixed_t	step = rw_scalestep;
+    const angle_t	centerangle = rw_centerangle;
+    const fixed_t	offset = rw_offset;
+    const fixed_t	distance = rw_distance;
+    lighttable_t** const lights = walllights;
+    int			x = x0 - 1;
+    int			d;
+    unsigned		scale = scale0 - step;	// column x's
+    fixed_t		texturecolumn = 0;
+    lighttable_t*	colormap = NULL;
+    fixed_t		iscale = 0;
+
+    for ( ; t < end ; t++)
+    {
+	d = t->x - x;
+	if (d)
+	{
+	    // on to this tier's column: usually the next
+	    x += d;
+	    if (d == 1)
+		scale += step;
+	    else
+		scale += (unsigned)d * (unsigned)step;
+	    // calculate texture offset
+	    texturecolumn = SEG_TEXTURECOLUMN (x);
+	    // calculate lighting
+	    colormap = lights[R_WallLightIndex ((fixed_t)scale)];
+	    iscale = 0xffffffffu / scale;
+	}
+	t->texturecolumn = texturecolumn;
+	t->colormap = colormap;
+	t->iscale = iscale;
+    }
+}
+
+// save texturecol
+//  for backdrawing of masked mid texture
+static __attribute__((noinline)) void R_SegMaskedColumns (int x, int stopx)
+{
+    const angle_t	centerangle = rw_centerangle;
+    const fixed_t	offset = rw_offset;
+    const fixed_t	distance = rw_distance;
+    short* const	col = maskedtexturecol;
+
+    for ( ; x < stopx ; x++)
+	col[x] = SEG_TEXTURECOLUMN (x);
+}
+
+static inline __attribute__((always_inline)) void R_RenderSegLoopAt (const int low)
+{
+    const int		x0 = rw_x;
+    const int		stopx = rw_stopx;
+    const fixed_t	scale0 = rw_scale;
+    segtier_t*		t;
+
+    if (x0 < stopx)
+    {
+	if (midtexture)
+	    t = R_SegMarkSolid (segtiers);
+	else
+	{
+	    t = R_SegMarkTwoSided (segtiers);
+	    if (maskedtexture)
+		R_SegMaskedColumns (x0, stopx);
+	}
+	if (t != segtiers)
+	    R_SegTierColumns (segtiers, t, x0, scale0);
+	rw_x = stopx;
+	rw_scale = (unsigned)scale0
+	    + (unsigned)(stopx - x0) * (unsigned)rw_scalestep;
+	R_DrawSegTiers (segtiers, t, low);
+    }
 }
 
 void R_RenderSegLoop (void)

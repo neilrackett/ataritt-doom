@@ -391,6 +391,103 @@ void R_DrawMaskedColumn (column_t* column)
 
 
 
+#if defined(USEASM) && defined(__M68020__)
+// 68020+ (TTDOOM): a masked column's posts as column records, to draw
+// together with R_DrawColumns as walls do theirs. A post through colfunc
+// went through the dc_ globals to R_DrawColumn, which set up one record
+// and drew it: the same R_SetupColumn on the same values, so the same
+// pixels.
+#define MAXMASKEDCOLS	256
+#define MAXCOLUMNPOSTS	128	// a column has fewer posts than this
+static colrec_t		maskedcols[MAXMASKEDCOLS];
+
+// R_DrawMaskedColumn's loop for view column x: its posts set up from c on.
+// Returns the end of them.
+static inline __attribute__((always_inline)) colrec_t*
+R_SetupMaskedColumn
+( colrec_t*		c,
+  const column_t*	column,
+  int			x,
+  const lighttable_t*	colormap,
+  fixed_t		iscale,
+  fixed_t		basetexturemid,
+  fixed_t		scale,
+  fixed_t		topscreen0,
+  int			floorclip,
+  int			ceilingclip,
+  const int		low )
+{
+    int		topscreen;
+    int 	bottomscreen;
+    int		yl;
+    int		yh;
+
+    for ( ; column->topdelta != 0xff ; ) 
+    {
+	// calculate unclipped screen coordinates
+	//  for post
+	topscreen = topscreen0 + FixedMulShort(scale, column->topdelta);
+	bottomscreen = topscreen + FixedMulShort(scale, column->length);
+
+	yl = (topscreen+FRACUNIT-1)>>FRACBITS;
+	yh = (bottomscreen-1)>>FRACBITS;
+		
+	if (yh >= floorclip)
+	    yh = floorclip-1;
+	if (yl <= ceilingclip)
+	    yl = ceilingclip+1;
+
+	if (yl <= yh)
+	    R_SetupColumn (c++, x, yl, yh, (const byte *)column + 3,
+			   colormap, iscale,
+			   basetexturemid - (column->topdelta<<FRACBITS), low);
+	column = (const column_t *)(  (const byte *)column + column->length + 4);
+    }
+    return c;
+}
+
+// R_DrawVisSprite's columns, for a sprite drawn by R_DrawColumn: set up
+// as records and drawn a batch at a time.
+static inline __attribute__((always_inline)) void
+R_DrawVisSpriteColumns (const vissprite_t* vis, const patch_t* patch, const int low)
+{
+    colrec_t*			c = maskedcols;
+    const lighttable_t* const	colormap = dc_colormap;
+    const fixed_t		iscale = dc_iscale;
+    const fixed_t		texturemid = dc_texturemid;
+    const fixed_t		scale = spryscale;
+    const fixed_t		topscreen = sprtopscreen;
+    const short* const		fclip = mfloorclip;
+    const short* const		cclip = mceilingclip;
+    const fixed_t		xiscale = vis->xiscale;
+    const int			x2 = vis->x2;
+    fixed_t			frac = vis->startfrac;
+    int				x;
+
+    for (x=vis->x1 ; x<=x2 ; x++, frac += xiscale)
+    {
+	if (c > maskedcols + MAXMASKEDCOLS - MAXCOLUMNPOSTS)
+	{
+	    if (low)
+		R_DrawColumnsLow (maskedcols, c);
+	    else
+		R_DrawColumns (maskedcols, c);
+	    c = maskedcols;
+	}
+	c = R_SetupMaskedColumn
+	    (c, (const column_t *) ((const byte *)patch
+				    + LONG(patch->columnofs[frac>>FRACBITS])),
+	     x, colormap, iscale, texturemid, scale, topscreen,
+	     fclip[x], cclip[x], low);
+    }
+    if (low)
+	R_DrawColumnsLow (maskedcols, c);
+    else
+	R_DrawColumns (maskedcols, c);
+    dc_x = x;
+}
+#endif
+
 //
 // R_DrawVisSprite
 //  mfloorclip and mceilingclip should also be set.
@@ -431,6 +528,17 @@ R_DrawVisSprite
     spryscale = vis->scale;
     sprtopscreen = centeryfrac - FixedMul(dc_texturemid,spryscale);
 	
+#if defined(USEASM) && defined(__M68020__) && !defined(RANGECHECK)
+    if (colfunc == basecolfunc)
+    {
+	if (detailshift)
+	    R_DrawVisSpriteColumns (vis, patch, 1);
+	else
+	    R_DrawVisSpriteColumns (vis, patch, 0);
+	return;
+    }
+#endif
+
     for (dc_x=vis->x1 ; dc_x<=vis->x2 ; dc_x++, frac += vis->xiscale)
     {
 	texturecolumn = frac>>FRACBITS;

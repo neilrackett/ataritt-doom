@@ -48,21 +48,26 @@ typedef int fixed_t;
 extern int	fixedmul_muls64;
 fixed_t FixedMulSplit	(fixed_t a, fixed_t b);
 
+// FixedMul as the 64-bit muls.l, for a loop that has tested
+// fixedmul_muls64 itself (FixedMul tests it at every call).
+static inline fixed_t FixedMul64 (fixed_t a, fixed_t b)
+{
+    fixed_t	hi;
+
+    // The 64-bit product in hi:a; bits 47..16 are the result
+    __asm__ ("muls.l	%2,%1:%0\n\t"
+	     "move.w	%1,%0\n\t"
+	     "swap	%0"
+	     : "=d" (a), "=&d" (hi)
+	     : "d" (b), "0" (a)
+	     : "cc");
+    return a;
+}
+
 static inline fixed_t FixedMul (fixed_t a, fixed_t b)
 {
     if (fixedmul_muls64)
-    {
-	fixed_t	hi;
-
-	// The 64-bit product in hi:a; bits 47..16 are the result
-	__asm__ ("muls.l	%2,%1:%0\n\t"
-		 "move.w	%1,%0\n\t"
-		 "swap	%0"
-		 : "=d" (a), "=&d" (hi)
-		 : "d" (b), "0" (a)
-		 : "cc");
-	return a;
-    }
+	return FixedMul64 (a, b);
     return FixedMulSplit (a, b);
 }
 

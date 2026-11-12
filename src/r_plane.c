@@ -235,15 +235,123 @@ R_MapPlane
 
 
 #if defined(USEASM) && defined(__M68020__)
-// The spans R_MakeSpans noted, set up and drawn
-static void R_MapStagedSpans (void)
+// A view row's distance and texture steps for the plane height they were
+// last worked out for (id's cachedheight[] and so on, a row together in
+// one line of the data cache)
+typedef struct
+{
+    fixed_t	height;
+    fixed_t	distance;
+    fixed_t	xstep;
+    fixed_t	ystep;
+} planerow_t;
+
+static planerow_t	planerows[SCREENHEIGHT];
+
+// The spans R_MakeSpans noted, set up and drawn: R_MapPlane for each, with
+// the plane's and the view's values in locals and nothing through the ds_
+// globals (gcc wrote each of those to memory and read it back, a span).
+// An instance for each detail level, and for FixedMul as the 64-bit
+// multiply or (a 68060) the call.
+#ifdef FIXEDMUL_MULS64
+#define SPAN_MUL(a, b) (muls64 ? FixedMul64 ((a), (b)) : FixedMulSplit ((a), (b)))
+#else
+#define SPAN_MUL(a, b) FixedMul ((a), (b))
+#endif
+
+static inline __attribute__((always_inline)) void
+R_MapStagedSpansAt (const int low, const int muls64)
 {
     const stagedspan_t*	t;
+    const stagedspan_t* const end = stagedspan;
+    spanrec_t*		r = planespan;
+    const fixed_t	height = planeheight;
+    const fixed_t	xscale = basexscale;
+    const fixed_t	yscale = baseyscale;
+    const fixed_t	vx = viewx;
+    const fixed_t	vy = -viewy;
+    const angle_t	va = viewangle;
+    lighttable_t* const	fixedmap = fixedcolormap;
+    lighttable_t** const zlight = planezlight;
 
-    for (t = stagedspans; t < stagedspan; t++)
-	R_MapPlane (t->y, t->x1, t->x2);
+    // The rows these spans are on, at this plane's height: a loop of its
+    // own, so that the spans' loop is small enough for the instruction
+    // cache
+    for (t = stagedspans; t < end; t++)
+    {
+	const int	y = t->y;
+	planerow_t* const row = &planerows[y];
+
+	if (height != row->height)
+	{
+	    fixed_t	distance;
+
+	    row->height = height;
+	    distance = row->distance = SPAN_MUL (height, yslope[y]);
+	    row->xstep = SPAN_MUL (distance, xscale);
+	    row->ystep = SPAN_MUL (distance, yscale);
+	}
+    }
+
+    for (t = stagedspans; t < end; t++)
+    {
+	const int	y = t->y;
+	const int	x1 = t->x1;
+	const planerow_t* const row = &planerows[y];
+	const fixed_t	distance = row->distance;
+	angle_t		angle;
+	fixed_t		length;
+	fixed_t		xfrac;
+	fixed_t		yfrac;
+	unsigned	index;
+	lighttable_t*	colormap;
+
+	length = SPAN_MUL (distance, distscale[x1]);
+	angle = (va + xtoviewangle[x1])>>ANGLETOFINESHIFT;
+	xfrac = vx + SPAN_MUL (length, finecosine[angle]);
+	yfrac = vy - SPAN_MUL (length, finesine[angle]);
+
+	// (the light table first, then the fixed one over it: gcc put the
+	// table look-up, the usual case, far out of the loop otherwise)
+	index = distance >> LIGHTZSHIFT;
+	
+	if (index >= MAXLIGHTZ )
+	    index = MAXLIGHTZ-1;
+
+	colormap = zlight[index];
+	if (__builtin_expect (fixedmap != NULL, 0))
+	    colormap = fixedmap;
+
+	R_SetupSpan (r, y, x1, t->x2, colormap, xfrac, yfrac,
+		     row->xstep, row->ystep, low);
+	if (++r == planespans + MAXPLANESPANS)
+	{
+	    planespan = r;
+	    R_FlushSpans ();
+	    r = planespans;
+	}
+    }
+    planespan = r;
     stagedspan = stagedspans;
     R_FlushSpans ();
+}
+
+static __attribute__((noinline)) void R_MapStagedSpans (void)
+{
+#ifdef FIXEDMUL_MULS64
+    if (fixedmul_muls64)
+    {
+	if (detailshift)
+	    R_MapStagedSpansAt (1, 1);
+	else
+	    R_MapStagedSpansAt (0, 1);
+	return;
+    }
+#endif
+    if (detailshift)
+	R_MapStagedSpansAt (1, 0);
+    else
+	R_MapStagedSpansAt (0, 0);
 }
 #endif
 
@@ -267,7 +375,12 @@ void R_ClearPlanes (void)
     lastopening = openings;
     
     // texture calculation
+#if defined(USEASM) && defined(__M68020__)
+    for (i=0 ; i<SCREENHEIGHT ; i++)
+	planerows[i].height = 0;
+#else
     memset (cachedheight, 0, sizeof(cachedheight));
+#endif
 
     // left to right mapping
     angle = (viewangle-ANG90)>>ANGLETOFINESHIFT;

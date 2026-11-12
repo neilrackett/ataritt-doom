@@ -280,6 +280,8 @@ make clean            # build/ and those programs (the WADs in dist/ stay)
 # TTDOOM benchmarks (Hatari, see "Testing in Hatari"): baseline vs working tree
 tools/bench/mkbuild.sh base @HEAD && tools/bench/mkbuild.sh cur
 tools/bench/run.sh base low; tools/bench/run.sh cur low
+tools/bench/fuzz.sh base && tools/bench/fuzz.sh cur base   # game logic the same?
+RCHECK=1 tools/bench/mkbuild.sh rc && tools/bench/rcheck.sh rc  # pixels the same?
 
 # RP2040 microfirmware for SidecarTridge Multi-device
 make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION].uf2
@@ -406,7 +408,7 @@ Anything that reads or publishes Xpad: read
   group's merges; a row's last group is stored during the next row's
   first. Each loop must fit the 256-byte instruction cache at any
   alignment, at most 240 bytes: the TTDOOM link checks it with `nm`
-  (`C2P_CACHE_CHECK`). Under Hatari +3-5% on the TT, +2-3% on the Falcon;
+  (`CACHE_CHECK`). Under Hatari +3-5% on the TT, +2-3% on the Falcon;
   every page of a timedemo identical to the per-row loops' (TT, Falcon VGA
   and RGB, sizes 9 and 10).
 - **Pair C2P (low detail):** in low detail the 3D view is in pixel pairs,
@@ -506,6 +508,50 @@ Anything that reads or publishes Xpad: read
   `validcount`). `P_DivlineSide` is inline and the sight check's BSP walk
   a loop with its own stack (TTDOOM), visiting nodes in the same order.
   Sight checks were 58% of the game logic: 9.2 -> 7.3 ms a tic (demo1).
+- **Sight traversal in asm (68020+, exact):** `P_SightTrace`
+  (`p_sight.c`) is `P_CrossBSPNode` and `P_CrossSubsector`'s loop as one
+  routine of 282 bytes, laid out for the 256-byte instruction cache: the
+  walk, the subsector's lines and the side test took turns pushing each
+  other out of it as C (6 cycles an instruction). It reads compact
+  records: `node_t` is 16 bytes of shorts (the WAD's whole map units;
+  bounding boxes apart in `nodebbox[]`), a seg's `sightseg_t` 16 bytes
+  (its linedef as a divline in shorts, laid out as a node, so one side
+  routine serves both), `sightsubs[]` each subsector's records, and
+  `linevalid[]` the lines' `validcount`. A line the sight line really
+  crosses goes to C (`P_SightCrossedLineAt`, id's code). Sight lines
+  exactly along x or y, and 68000 builds, take the C versions, which read
+  the same records. Sight checks 3.9 -> 2.0 ms a tic (demo3).
+- **Thinkers (exact):** `P_RunThinkers` runs `P_MobjThinkerInline`
+  (`p_local.h`) for things: id's tests in id's order, with a thing that
+  moves or is off the floor going to `P_MobjThinkerMoving` (id's whole
+  function) and the nightmare respawn count to `P_MobjRespawnCheck`.
+- **Point in subsector (68020 to 68040, exact):** `R_PointNodeWalk`
+  (`r_main.c`), `R_PointInSubsector`'s walk with `R_PointOnSide` inline,
+  in asm on the compact nodes: 95 -> about 40 cycles a node. A 68060
+  (`fixedmul_muls64` clear) keeps the C.
+  With these three the game logic is 9.2 -> 6.3 ms a tic (demo3, gcc
+  4.6.4; 8.5 -> 6.0 with gcc 13 + LTO), and STDOOM's 101 -> 94 ms.
+- **Wall loop in passes (68020+, same pixels):** `R_RenderSegLoop` was
+  one loop of 380 bytes a textured column that reloaded a dozen globals
+  each time round. Now `R_SegMarkSolid`/`R_SegMarkTwoSided` clip, mark the
+  planes and note the tiers; `R_SegTierColumns` works out texture column,
+  light (a table for `LIGHT_INDEX`'s multiply) and scale once for each
+  column that has a tier (clipped columns skip two multiplies and the
+  divide); `R_DrawSegTiers` as before. A column's scale is the seg's
+  first plus the step times the columns since, in unsigned arithmetic,
+  which is what id's adding came to. Walls 14.3 -> 10.0 ms a frame
+  (demo3 low).
+- **Span set-up (68020+, same pixels):** `R_MapStagedSpans` first brings
+  the rows' cache up to date (`planerows[]`: id's four `cached` arrays as
+  one 16-byte record a row), then sets the spans up from locals: nothing
+  through the `ds_` globals, and `FixedMul64` (`m_fixed.h`: `FixedMul`
+  without its test of `fixedmul_muls64`, made once outside). 5.7 -> 3.6
+  ms.
+- **Sprites as column records (68020+, same pixels):** a sprite drawn by
+  `R_DrawColumn` has its posts set up as records
+  (`R_SetupMaskedColumn`) and drawn by `R_DrawColumns`, as walls are. Each
+  post used to go through `colfunc` and the `dc_` globals to set up and
+  draw one record. Fuzz and translated sprites, and masked walls, still do.
 
 ### Hard-won fixes (do not regress)
 
@@ -560,6 +606,21 @@ Anything that reads or publishes Xpad: read
   and 8.1% or 2.6% on a real TT. Compare timings only at the same load
   alignment: the start-up line prints where the zone and the program are.
 
+- **Lines' `validcount` is `linevalid[]`**, shared by the sight checks
+  and `P_BlockLinesIterator`, as the field in `line_t` was: a sight check
+  inside a blockmap walk (an action function run from a collision) bumps
+  `validcount` under it, and id's game depends on which lines each then
+  skips. Don't give either its own array.
+- **`P_SightTrace` is laid out for the cache:** 282 bytes where the cache
+  holds 256, so its first and last 26 bytes (to a line) share lines.
+  First comes what runs least (the second crossing test, the on-the-line
+  return, the general side test), last the pop loop. Moving a block
+  changes which code evicts which: the link checks only the size (288,
+  `CACHE_CHECK` in the Makefile), so profile after any change there
+  (`i-miss%`, 3% as it is).
+- **Game logic changes are checked by `fuzz.sh`, renderer changes by
+  `rcheck.sh`** (below), not by the demos' 600 tics alone.
+
 ### Testing in Hatari
 
 TOS images live in `tmp/tos/` (gitignored; `tos306uk.img` for TT; use EmuTOS
@@ -605,10 +666,32 @@ and up to six parallel runs are fine.
   pages against the frames (C2P).
 - **Game logic:** demos 1-3, low or `nodraw`, must print the same BENCH
   STATE hash as the baseline (demo1 `81c05110`, demo2 `a689a893`, demo3
-  `c3d20ea1` with DOOM1.WAD 1.9).
-- **Real play** runs about 35/fps tics a frame where the timedemo runs one,
-  so a frame is R / (1 - T/28.6 ms), R the timedemo frame less a tic (T,
-  from `nodraw`).
+  `c3d20ea1` with DOOM1.WAD 1.9). `-benchtics N` ends a demo at tic N
+  instead of 600.
+- **`fuzz.sh LABEL [BASE]`** is the wider check: `-benchfuzz SEED` plays
+  generated ticcmds (a private generator: move, turn, fire, use, change
+  weapon; god mode, the shareware weapons) one tic a loop, and prints a
+  hash of the game state in depth every 35 tics. The script runs 3000
+  tics on each of E1M1-E1M9, plain, `-respawn` and `-fast`, and compares
+  the 27 streams with BASE's (`mkbuild.sh base @HEAD`). gcc 4.6.4 and gcc
+  13 + LTO give the same streams; STDOOM (`MACHINE=ste`, a subset of
+  maps) its own baseline's.
+- **`rcheck.sh LABEL`** checks a renderer change pixel for pixel. While
+  the change is made its old code stays in the source under `R_CHECK`,
+  chosen by `r_oldpath`; `RCHECK=1 mkbuild.sh LABEL` defines it, and
+  `-rcheck` draws every 3D view both ways and compares `screens[0]`
+  (`RCHECK frames N, M differ`). The script runs demos 1-3 in low and
+  high detail at sizes 10, 9 and 5 and the fuzz player on nine maps: 27
+  runs, about 24,000 frames. Delete the old code once it passes. (A
+  deliberate one-step lighting error showed in 107 frames of 120.)
+- **Real play** (`run.sh LABEL lowplay`): `-playdemo` at a real TT's pace
+  (`-benchpace 190`: the tic clock 1.9 times as fast, as Hatari's TT is)
+  gives frames a second and the game's speed. `TryRunTics` runs at most 5
+  tics a frame (`NetUpdate` builds no further ahead: `BACKUPTICS/2-1`), so
+  below 7 fps Doom slows down rather than dropping frames, and a frame is
+  R + 5T, R the timedemo frame less a tic (T, from `nodraw`).
+- **`runkit.sh NAME`** runs `BENCH.TXT` lines (stdin) through `BENCH.TOS`
+  under Hatari: builds at the same load alignment, `+2`, `-cacr 0111`.
 - **Real hardware:** `tools/bench/ttkit.sh` builds a kit in `tmp/ttkit`:
   benchmark builds (600 tics, `BENCH STATE`) with gcc 4.6.4, gcc 13 + LTO
   and + PGO as `GCC4.TTP`, `LTO.TTP` and `PGO.TTP`, the WAD,
@@ -658,9 +741,31 @@ TT is the target (2 MB + 4 MB TT-RAM), demo1, ms a frame:
 
 Before: `00774e6`. After: the optimisations above, 2026-11-09. Demos 2 and
 3: TT low 118 -> 92 and 130 -> 101, high 168 -> 135 and 186 -> 150. Game
-logic a tic (`nodraw`): 9.2 -> 7.3, 8.8 -> 7.9, 10.9 -> 9.2. In real
-play (about 4 tics a frame) that makes TT low ~150 -> ~106 ms (6.6 ->
-9.5 fps) and high ~220 -> ~161 ms (4.5 -> 6.2 fps).
+logic a tic (`nodraw`): 9.2 -> 7.3, 8.8 -> 7.9, 10.9 -> 9.2. (The
+real-play figures once given here took Hatari's times for a TT's and
+every due tic as run: see "On a real TT" and "Real play".)
+
+**2026-11-12, game logic and the renderer's set-up** (the sight
+traversal, thinkers, point walk, wall loop, span set-up and sprite
+records above), demo3, before -> after:
+
+|                                  | gcc 4.6.4       | gcc 13 + LTO   |
+| -------------------------------- | --------------- | -------------- |
+| Game logic a tic                 | 9.1 -> 6.3 ms   | 8.5 -> 6.0     |
+| Timedemo frame, low              | 100.8 -> 90.8   | 96.3 -> 89.7   |
+| Timedemo frame, high             | 149.8 -> 133.1  | 141.8 -> 133.0 |
+| Real play at a TT's pace, low    | 3.73 -> 4.44 fps | 3.92 -> 4.52  |
+| Real play at a TT's pace, high   | 2.76 -> 3.24    | 2.92 -> 3.28   |
+| Game speed in that play, low     | 54% -> 63%      | 56% -> 65%     |
+| Game speed in that play, high    | 40% -> 47%      | 42% -> 47%     |
+
+Demo hashes and all 27 fuzz streams unchanged; `rcheck.sh` no pixel in
+24,291 frames; `-mixtest` and `-c2ptest` pass. The gcc 13 gain holds
+loaded 2 bytes off (96.1 -> 90.3) and with `-cacr 0111` (87.0 -> 80.6).
+Falcon VGA low (demo1): 194.9 -> 169.7 ms. STDOOM: game logic 101 -> 94
+ms a tic, a frame 877 -> 871. In low detail the frame is now C2P 22 ms, span
+drawing 12, column drawing 14, walls 10, span set-up and planes 6.6,
+sprites 4.5, game logic 6.3.
 
 - **The drawers are now memory-bound** under Hatari: low-detail spans hit
   the data cache 58% of the time (the 512-byte word colormaps can't fit
@@ -693,7 +798,8 @@ play (about 4 tics a frame) that makes TT low ~150 -> ~106 ms (6.6 ->
   `strupr` under `-std=c99`, and gcc 14 on rejects implicit declarations.
 - **LTO=1** inlines across files. `atari_c2p.c` is compiled without it:
   an LTO object holds its top-level asm only as intermediate code, where
-  `C2P_CACHE_CHECK` can't measure the loops.
+  `CACHE_CHECK` can't measure the loops (`p_sight.c` likewise, for
+  `P_SightTrace`).
 - **PGO:** `tools/bench/pgo.sh` builds with `PGO=gen`, runs the training
   timedemos (demo1 and demo2, low and high; demo3 stays unseen), merges
   the profiles and rebuilds with `PGO=use`: `pgo.sh LABEL` for a benchmark
@@ -783,21 +889,18 @@ The first round, BENCH.TOS in TT-RAM, so the zone was 1.83 MB:
   the game logic. Another project measured 2.2 for compiled code and 1.5
   for a loop that stays in the instruction cache. High detail's extra
   time, mostly the drawers' inner loops, is 1.7 times Hatari's.
-- **The game logic is half of real play on a TT.** At 14.8 ms a tic
-  (demo3), 35 tics a second take 52% of the CPU (demo1, 12.0 ms: 42%).
-  Real play (see "Real play" above, less the timedemo's lump reads) works
-  out at about 327 ms a frame, 3.1 fps, in low detail and 488 ms, 2.1
-  fps, in high detail (demo1 low: 227 ms, 4.4 fps). With the game logic
-  that big, cutting it by a tenth gains as much as cutting the frame by a
-  tenth.
-- **The C2P is a fifth of a frame and a tenth of real play on a TT:**
-  33.5 ms in low detail (19% of the frame), 37.7 ms in high (15%). In
-  real play that is 10% of the CPU in demo3 (8% high, about 15% in
-  demo1), against 52% for the game logic: a C2P a fifth faster would make
-  demo3 low 4% faster, a game logic a fifth faster 18%. It takes 1.5-1.6
-  times Hatari's time, as a loop in the instruction cache does, against
-  1.9-2.0 for the rest of the frame: not bound by ST-RAM's stores (a page
-  is at least 19 ms of them).
+- **Real play on a TT is in slow motion at size 10.** `TryRunTics` runs
+  at most 5 tics a frame (see "Real play"), so with those builds a frame
+  was R + 5T: 157 + 74 = 231 ms in low detail (demo3), 4.3 fps with the
+  game at 62% of its speed, and 309 ms, 3.2 fps and 46%, in high detail.
+  Drawing is 54% of that frame, the game logic 32% and the C2P 14%.
+  (Hatari at a TT's pace, `lowplay`, agrees: 3.7 fps and 54% for the gcc
+  4.6.4 build.)
+- **The C2P is a fifth of a timedemo frame on a TT:** 33.5 ms in low
+  detail (19%), 37.7 ms in high (15%). It takes 1.5-1.6 times Hatari's
+  time, as a loop in the instruction cache does, against 1.9-2.0 for the
+  rest of the frame: not bound by ST-RAM's stores (a page is at least 19
+  ms of them).
 - **PGO is what pays on a TT:** 4-5% over gcc 4.6.4. LTO alone is no
   faster there (0.2% slower in the second round, though 2.3% faster under
   Hatari), so the release (gcc 13 + LTO, no PGO) runs at gcc 4.6.4's speed.
@@ -816,11 +919,28 @@ The first round, BENCH.TOS in TT-RAM, so the zone was 1.83 MB:
 - **Time on a real Falcon.** A TT is timed above. A real Falcon refills its
   instruction cache from ST-RAM over a 16-bit bus, so the loops' cache fit
   may count for more there.
-- **Game logic: the biggest lever on a TT.** It is half of real play
-  there (above), and a fifth off it would gain 18%, where a fifth off the
-  C2P gains 4%. It takes twice Hatari's time throughout, so Hatari's
-  `nodraw` profiles rank it right: 7.3 ms a tic for demo3, where
-  `P_CrossSubsector`, `P_MobjThinker` and `P_CrossBSPNode` lead.
+- **The rest of the 2026-11-12 plan** (exact, to be checked the same
+  way): masked walls as column records (flushing before an uncached
+  column, as `R_DrawSegTiers` does); `R_SortVisSprites` as ADoom's
+  insertion sort; `R_MakeSpans` with trip counts worked out up front
+  (ADoom); `R_PointToAngle` as octant selection plus one `SlopeDiv`; the
+  wall tiers' column fetch (`R_RenderSegLoop`, 4.5 ms, a table chain a
+  tier); `R_MapStagedSpans` in asm; span stores four pixels to a
+  `move.l` and columns unrolled x4 (ADoom's `R_DrawSpan_040` and
+  `R_DrawColumn_040`: packing by `move.w`/`move.b`/`swap` leaves X
+  alone, and ending the loop on an address compare frees its counter).
+- **Game logic, what's left:** the thinker loop (1.2 ms a tic: it reads
+  six cache lines a thing; `mobj_t` reordered would read three, but
+  savegames store the struct raw, so they would have to be written
+  through the old layout), then collision (`P_CheckPosition` and the
+  blockmap iterators, 1 ms in 100 bytes here and there). Skipping the two
+  multiplies of a sight side test when the signs decide it was worked
+  out and left: about 1% of a tic for 40 bytes of the cached routine.
+- **ADoom** (1.4, `mheyer32/ADoom`) has nothing else to take: its
+  renderer asm is id's code by hand (a divide a column, no batching,
+  `FixedMul` through a pointer), its game logic id's, its FPU fixed point
+  for the 68060 only, and its compare-buffer C2P costs 13 ms a frame on
+  a 25 MHz 68030 before it saves anything.
 - **PGO for the release** (it is 4-5% on a TT, where LTO alone gained
   nothing): CI builds TTDOOM with gcc 13 + LTO, and the training needs
   Hatari, a TOS image and the WAD, which CI doesn't have (`pgo.sh --dist`
@@ -863,11 +983,10 @@ The first round, BENCH.TOS in TT-RAM, so the zone was 1.83 MB:
   C2P box loops are `cdecl` under `__FASTCALL__` (their asm reads the
   stack; gcc's fastcall passes pointers in a0/a1 and integers in d0-d2).
   STDOOM would also need `sidecart_stubs.S` changed.
-- **Smaller wins left:** `R_MapStagedSpans` still misses the instruction
-  cache a quarter of the time (gcc uses `bfextu` for the span set-up's
-  6-bit fields); the per-column `divu.l` for `iscale`; `P_CrossSubsector`
-  (2 ms a tic) and the thinker loop (1.5 ms); span stores packed into longs
-  (no data register is free in the span loop).
+- **Smaller wins left:** the `divu.l` for `iscale`, now only for
+  columns that draw (an approximation would be sub-texel: not adopted
+  without Neil seeing frame differences); `R_StoreWallRange` (2.2 ms, 3K
+  of straight-line code).
 - **Falcon true colour (unexplored).** The 16-bit mode needs no C2P but
   doubles the bytes on a bus the video also reads. The cheap first test is
   to keep the 8-bit renderer and replace the Falcon C2P with an 8-to-16-bit
