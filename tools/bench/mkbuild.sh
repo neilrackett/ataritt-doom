@@ -14,13 +14,14 @@
 # BENCH is the work folder: tmp/bench by default (tmp/ is not in git).
 # TOOLCHAIN=mintelf builds with gcc 13 (the Makefile's TOOLCHAIN) instead of
 # gcc 4.6.4; with it, LTO=1, FASTCALL=1 and PGO=gen|use go to the Makefile
-# too (PGO: pgo.sh).
+# too (PGO: pgo.sh; PGO=use PROFILE=tools/pgo/profile builds with the
+# profile in git, as the release does).
 set -eo pipefail
 LABEL=$1
 SRC=${2:-}
 TARGET=${3:-ttdoom}
 TOOLCHAIN=${TOOLCHAIN:-mint}
-MAKEVARS="TOOLCHAIN=$TOOLCHAIN${LTO:+ LTO=$LTO}${FASTCALL:+ FASTCALL=$FASTCALL}${PGO:+ PGO=$PGO}"
+MAKEVARS="TOOLCHAIN=$TOOLCHAIN${LTO:+ LTO=$LTO}${FASTCALL:+ FASTCALL=$FASTCALL}${PGO:+ PGO=$PGO}${PROFILE:+ PROFILE=$PROFILE}"
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 BENCH=${BENCH:-$REPO/tmp/bench}

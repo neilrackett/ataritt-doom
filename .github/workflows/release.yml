@@ -68,13 +68,15 @@ jobs:
         run: curl -sL https://github.com/sidecartridge/atarist-toolkit-docker/releases/latest/download/install_atarist_toolkit_docker.sh | bash -s -- mintelf
 
       - name: Build
-        # STDOOM with gcc 4.6.4, as always. TTDOOM with gcc 13 and LTO,
-        # into dist/mintelf-lto/: without PGO, whose training timedemos
-        # need Hatari, a TOS image and the WAD (tools/bench/pgo.sh --dist
-        # builds that locally).
+        # STDOOM with gcc 4.6.4, as always. TTDOOM with gcc 13, LTO and
+        # profile-guided optimisation, into dist/mintelf-lto-pgo/. The
+        # profile's training timedemos need Hatari, a TOS image and the
+        # WAD, so it is recorded locally (tools/bench/pgo.sh --dist) and
+        # kept in tools/pgo/profile: a function changed since is compiled
+        # without its profile until the next recording.
         run: |
           stcmd make stdoom
-          stcmd make ttdoom TOOLCHAIN=mintelf LTO=1
+          stcmd make ttdoom TOOLCHAIN=mintelf LTO=1 PGO=use PROFILE=tools/pgo/profile
 
       - name: Move the latest tag onto this commit
         # The "latest" release is attached to this tag, so moving it
@@ -101,5 +103,5 @@ jobs:
         run: |
           gh release view latest >/dev/null 2>&1 \
             || { echo "No 'latest' release to upload to: create it by hand first."; exit 1; }
-          gh release upload latest dist/mintelf-lto/TTDOOM.TOS dist/STDOOM.TOS --clobber
+          gh release upload latest dist/mintelf-lto-pgo/TTDOOM.TOS dist/STDOOM.TOS --clobber
           echo "Published TTDOOM.TOS and STDOOM.TOS from $GITHUB_SHA to the latest release."

@@ -18,6 +18,11 @@
 # demos ending at tic 600), as $BENCH/bin/LABEL.TOS.
 # --dist: this tree as it is, the demos played in full, into
 # dist/mintelf-lto-pgo/TTDOOM.TOS (its build folder keeps the profile).
+# With LTO and without FASTCALL (the release's build) the profile is also
+# copied to tools/pgo/profile, which is in git: the release workflow has
+# no Hatari to record one, and builds with that
+# (make ttdoom TOOLCHAIN=mintelf LTO=1 PGO=use PROFILE=tools/pgo/profile).
+# Commit it with the source it was recorded from.
 #
 # LTO=1 by default (LTO=0 for PGO alone); FASTCALL=1 as the Makefile takes
 # it. Needs gcc 13 in the toolkit image (STCMD_IMAGE_TAG picks another).
@@ -76,6 +81,11 @@ if [ "$LABEL" = --dist ]; then
   stcmd make ttdoom $MAKEVARS PGO=use > "$BENCH/build_dist.log" 2>&1 \
     || { tail -30 "$BENCH/build_dist.log"; exit 1; }
   echo "built $T/dist/$V/TTDOOM.TOS"
+  if [ "$V" = mintelf-lto-pgo ]; then
+    rm -rf tools/pgo/profile; mkdir -p tools/pgo/profile
+    cp build/$V/*.gcda tools/pgo/profile/
+    echo "profile in tools/pgo/profile ($(ls tools/pgo/profile | wc -l | tr -d ' ') files)"
+  fi
 else
   stcmd make ttdoom $MAKEVARS PGO=use > "$BENCH/build_$LABEL.log" 2>&1 \
     || { tail -30 "$BENCH/build_$LABEL.log"; exit 1; }

@@ -114,8 +114,13 @@ endif
 ifeq ($(PGO),gen)
 OPTFLAGS+=-fprofile-generate -fno-profile-values -fprofile-info-section=gcov_info
 endif
+# PROFILE=folder: with PGO=use, that folder's .gcda files are the profile
+# (tools/pgo/profile, as tools/bench/pgo.sh --dist leaves it: what the
+# release is built with, where there is no Hatari to record one). A
+# function changed since the profile was recorded is compiled without it,
+# not refused (-Wno-coverage-mismatch).
 ifeq ($(PGO),use)
-OPTFLAGS+=-fprofile-use -fno-profile-values -fprofile-correction -fprofile-partial-training -Wno-missing-profile
+OPTFLAGS+=-fprofile-use -fno-profile-values -fprofile-correction -fprofile-partial-training -Wno-missing-profile -Wno-coverage-mismatch
 endif
 endif
 
@@ -208,6 +213,16 @@ endif
 # which an LTO object only holds as gcc's intermediate code until the link:
 # compiled without LTO, so CACHE_CHECK can measure them in the object
 $(OBJDIR)/atari_c2p.tt.o $(OBJDIR)/p_sight.tt.o: OPTFLAGS:=$(filter-out -flto%,$(OPTFLAGS))
+
+ifeq ($(PGO),use)
+ifneq ($(PROFILE),)
+# gcc looks for an object's profile beside it
+$(OBJSTT): | pgoprofile
+.PHONY: pgoprofile
+pgoprofile: | $(OBJDIR)
+	cp $(PROFILE)/*.gcda $(OBJDIR)/
+endif
+endif
 
 all:	 $(DISTDIR)/$(TARGET) $(DISTDIR)/$(TARGETTT)
 

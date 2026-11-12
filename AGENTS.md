@@ -291,13 +291,24 @@ make sidecart debug   # builds both test apps plus sidecart/dist/[UUID]-[VERSION
 
 `.github/workflows/release.yml`: every push to `main` (except prose,
 `docs/` and `sidecart/` only) builds `dist/STDOOM.TOS` (`stcmd make
-stdoom`, gcc 4.6.4) and TTDOOM with gcc 13 and LTO (`stcmd make ttdoom
-TOOLCHAIN=mintelf LTO=1`, `dist/mintelf-lto/TTDOOM.TOS`; no PGO, whose
-training needs Hatari, a TOS image and the WAD), moves the lightweight
+stdoom`, gcc 4.6.4) and TTDOOM with gcc 13, LTO and PGO (`stcmd make
+ttdoom TOOLCHAIN=mintelf LTO=1 PGO=use PROFILE=tools/pgo/profile`,
+`dist/mintelf-lto-pgo/TTDOOM.TOS`), moves the lightweight
 `latest` tag onto the commit through the API, and replaces those two on the
 hand-written `latest` release with `gh release upload --clobber`: no title
 or notes change, and no other asset is added or touched. It checks out only the `src/atarist-sfp004` and
 `lib/xpad` submodules, not the Pico SDK. No version tags yet.
+
+**The profile is in git** (`tools/pgo/profile`, 62 `.gcda` files, 67K):
+recording one needs Hatari, a TOS image and the WAD, which the workflow
+doesn't have. `tools/bench/pgo.sh --dist` records it (demos 1 and 2 in
+full, low and high) and leaves it there; `PROFILE=` copies it beside the
+objects, where gcc looks. A build from it is `pgo.sh --dist`'s own
+program but for the two bytes of padding after the relocation table,
+which differ from link to link. A function whose code has changed since
+the recording is compiled without its profile (`-Wno-coverage-mismatch`),
+so **record it again after changing hot code, and commit it with that
+code**: PGO is worth 4-5% on a real TT, 3-4% under Hatari.
 
 The toolkit image is `neilrackett/atarist-toolkit-docker-x86_64:mintelf`
 (`DOCKER_ACCOUNT` and the installer's tag argument), until upstream's has
@@ -763,7 +774,9 @@ Demo hashes and all 27 fuzz streams unchanged; `rcheck.sh` no pixel in
 24,291 frames; `-mixtest` and `-c2ptest` pass. The gcc 13 gain holds
 loaded 2 bytes off (96.1 -> 90.3) and with `-cacr 0111` (87.0 -> 80.6).
 Falcon VGA low (demo1): 194.9 -> 169.7 ms. STDOOM: game logic 101 -> 94
-ms a tic, a frame 877 -> 871. In low detail the frame is now C2P 22 ms, span
+ms a tic, a frame 877 -> 871. Built as the release is, from the
+profile in git: demo3 low 87.6, high 128.0, the game logic 5.7, real play
+4.68 fps at 67% speed. In low detail the frame is now C2P 22 ms, span
 drawing 12, column drawing 14, walls 10, span set-up and planes 6.6,
 sprites 4.5, game logic 6.3.
 
@@ -941,10 +954,6 @@ The first round, BENCH.TOS in TT-RAM, so the zone was 1.83 MB:
   `FixedMul` through a pointer), its game logic id's, its FPU fixed point
   for the 68060 only, and its compare-buffer C2P costs 13 ms a frame on
   a 25 MHz 68030 before it saves anything.
-- **PGO for the release** (it is 4-5% on a TT, where LTO alone gained
-  nothing): CI builds TTDOOM with gcc 13 + LTO, and the training needs
-  Hatari, a TOS image and the WAD, which CI doesn't have (`pgo.sh --dist`
-  runs locally).
 - **Hot static data on 16 bytes whatever the load address.** The program
   loads where GEMDOS puts it, and 2 bytes off a long costs 2.6% on a TT.
   Find which static arrays matter (Hatari profiles of a `+2` run against
