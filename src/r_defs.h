@@ -207,8 +207,9 @@ typedef struct line_s
     sector_t*	frontsector;
     sector_t*	backsector;
 
-    // if == validcount, already checked
-    int		validcount;
+    // "already checked" is linevalid[] (r_state.h): the sight checks and
+    // the blockmap walk compare it for every line they meet, and there a
+    // line costs 4 bytes of the data cache, not a line_t's worth.
 
     // thinker_t for reversable actions
     void*	specialdata;		
@@ -262,21 +263,50 @@ typedef struct
 //
 // BSP node.
 //
+// 16 bytes, allocated on 16: one line of a 68030's data cache, where id's
+// 52 bytes were four. The partition line is in whole map units, as the WAD
+// has it (id shifted each to a fixed_t). The children's bounding boxes,
+// which only the renderer's back side test reads, are in nodebbox[].
 typedef struct
 {
     // Partition line.
-    fixed_t	x;
-    fixed_t	y;
-    fixed_t	dx;
-    fixed_t	dy;
-
-    // Bounding box for each child.
-    fixed_t	bbox[2][4];
+    short	x;
+    short	y;
+    short	dx;
+    short	dy;
 
     // If NF_SUBSECTOR its a subsector.
     unsigned short children[2];
+
+    short	pad[2];
     
 } node_t;
+
+// A node's bounding box for each child, in whole map units.
+typedef short nodebbox_t[2][4];
+
+// What a sight check reads of a seg (sightsegs[], parallel to segs[]): its
+// linedef's number, and the linedef as a divline in whole map units, laid
+// out as a node_t's, with its second vertex. 16 bytes, where through the
+// seg a check took the seg, the line and both vertices.
+typedef struct
+{
+    short	x;		// the linedef's v1
+    short	y;
+    short	dx;		// v2 - v1 (in 16 bits, as id's fixed_t
+    short	dy;		// difference >> FRACBITS)
+    short	v2x;
+    short	v2y;
+    short	line;
+    short	pad;
+} sightseg_t;
+
+// A subsector's sight records: sightsubs[], parallel to subsectors[].
+typedef struct
+{
+    const sightseg_t*	first;
+    const sightseg_t*	end;
+} sightsub_t;
 
 
 

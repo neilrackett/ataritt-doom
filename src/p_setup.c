@@ -67,6 +67,11 @@ subsector_t*	subsectors;
 
 int		numnodes;
 node_t*		nodes;
+nodebbox_t*	nodebbox;
+
+sightseg_t*	sightsegs;
+sightsub_t*	sightsubs;
+int*		linevalid;
 
 int		numlines;
 line_t*		lines;
@@ -193,6 +198,27 @@ void P_LoadSegs (int lump)
     }
 	
     Z_Free (data);
+
+    // The sight checks' view of each seg (r_defs.h)
+    sightsegs = Z_Malloc (numsegs*sizeof(sightseg_t),PU_LEVEL,0);
+    for (i=0 ; i<numsegs ; i++)
+    {
+	ldef = segs[i].linedef;
+	sightsegs[i].x = ldef->v1->x >> FRACBITS;
+	sightsegs[i].y = ldef->v1->y >> FRACBITS;
+	sightsegs[i].dx = (ldef->v2->x - ldef->v1->x) >> FRACBITS;
+	sightsegs[i].dy = (ldef->v2->y - ldef->v1->y) >> FRACBITS;
+	sightsegs[i].v2x = ldef->v2->x >> FRACBITS;
+	sightsegs[i].v2y = ldef->v2->y >> FRACBITS;
+	sightsegs[i].line = ldef - lines;
+	sightsegs[i].pad = 0;
+    }
+    sightsubs = Z_Malloc (numsubsectors*sizeof(sightsub_t),PU_LEVEL,0);
+    for (i=0 ; i<numsubsectors ; i++)
+    {
+	sightsubs[i].first = &sightsegs[subsectors[i].firstline];
+	sightsubs[i].end = sightsubs[i].first + subsectors[i].numlines;
+    }
 }
 
 
@@ -276,7 +302,10 @@ void P_LoadNodes (int lump)
     node_t*	no;
 	
     numnodes = W_LumpLength (lump) / sizeof(mapnode_t);
-    nodes = Z_Malloc (numnodes*sizeof(node_t),PU_LEVEL,0);	
+    // each node on 16 bytes: a line of the data cache
+    nodes = (node_t *)(((unsigned long)
+	Z_Malloc (numnodes*sizeof(node_t)+15,PU_LEVEL,0) + 15) & ~15UL);
+    nodebbox = Z_Malloc (numnodes*sizeof(nodebbox_t),PU_LEVEL,0);
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
     mn = (mapnode_t *)data;
@@ -284,15 +313,16 @@ void P_LoadNodes (int lump)
     
     for (i=0 ; i<numnodes ; i++, no++, mn++)
     {
-	no->x = SHORT(mn->x)<<FRACBITS;
-	no->y = SHORT(mn->y)<<FRACBITS;
-	no->dx = SHORT(mn->dx)<<FRACBITS;
-	no->dy = SHORT(mn->dy)<<FRACBITS;
+	no->x = SHORT(mn->x);
+	no->y = SHORT(mn->y);
+	no->dx = SHORT(mn->dx);
+	no->dy = SHORT(mn->dy);
+	no->pad[0] = no->pad[1] = 0;
 	for (j=0 ; j<2 ; j++)
 	{
 	    no->children[j] = SHORT(mn->children[j]);
 	    for (k=0 ; k<4 ; k++)
-		no->bbox[j][k] = SHORT(mn->bbox[j][k])<<FRACBITS;
+		nodebbox[i][j][k] = SHORT(mn->bbox[j][k]);
 	}
     }
 	
@@ -371,6 +401,8 @@ void P_LoadLineDefs (int lump)
     numlines = W_LumpLength (lump) / sizeof(maplinedef_t);
     lines = Z_Malloc (numlines*sizeof(line_t),PU_LEVEL,0);	
     memset (lines, 0, numlines*sizeof(line_t));
+    linevalid = Z_Malloc (numlines*sizeof(*linevalid),PU_LEVEL,0);
+    memset (linevalid, 0, numlines*sizeof(*linevalid));
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
     mld = (maplinedef_t *)data;

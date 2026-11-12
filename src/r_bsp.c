@@ -418,8 +418,14 @@ int	checkcoord[12][4] =
 };
 
 
-boolean R_CheckBBox (fixed_t*	bspcoord)
+// The box is in whole map units (nodebbox_t).
+boolean R_CheckBBox (const short*	box)
 {
+    const fixed_t	bspcoord[4] =
+    {
+	(fixed_t)box[0] << FRACBITS, (fixed_t)box[1] << FRACBITS,
+	(fixed_t)box[2] << FRACBITS, (fixed_t)box[3] << FRACBITS
+    };
     short		boxx;
     short		boxy;
     short		boxpos;
@@ -611,7 +617,7 @@ void R_RenderBSPNode (int bspnum)
     R_RenderBSPNode (bsp->children[side]); 
 
     // Possibly divide back space.
-    if (R_CheckBBox (bsp->bbox[side^1]))	
+    if (R_CheckBBox (nodebbox[bspnum][side^1]))	
 	R_RenderBSPNode (bsp->children[side^1]);
 }
 

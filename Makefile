@@ -204,10 +204,10 @@ OBJSTT=$(patsubst %.o,%.tt.o,$(filter-out $(SIDECART_OBJS),$(OBJS))) $(OBJDIR)/a
 ifeq ($(PGO),gen)
 OBJSTT+=$(OBJDIR)/pgo.tt.o
 endif
-# The box C2P's loops are top-level asm, which an LTO object only holds as
-# gcc's intermediate code until the link: compiled without LTO, so
-# C2P_CACHE_CHECK can measure them in the object
-$(OBJDIR)/atari_c2p.tt.o: OPTFLAGS:=$(filter-out -flto%,$(OPTFLAGS))
+# The box C2P's loops and the sight check's traversal are top-level asm,
+# which an LTO object only holds as gcc's intermediate code until the link:
+# compiled without LTO, so CACHE_CHECK can measure them in the object
+$(OBJDIR)/atari_c2p.tt.o $(OBJDIR)/p_sight.tt.o: OPTFLAGS:=$(filter-out -flto%,$(OPTFLAGS))
 
 all:	 $(DISTDIR)/$(TARGET) $(DISTDIR)/$(TARGETTT)
 
@@ -225,14 +225,18 @@ $(DISTDIR)/$(TARGET):	$(OBJS) | $(DISTDIR)
 # The 8-plane box C2P's loops must fit the 68030's 256-byte instruction
 # cache at any alignment: at most 240 bytes from NAME_cache0 to
 # NAME_cache1 (atari_c2p.c). The assembler cannot check it itself.
-C2P_CACHE_CHECK = $(NM) -t d $(1) | awk \
+# The sight check's traversal (p_sight.c) is several loops that take turns:
+# up to 288 bytes, so only its first and last 32 bytes or so (to a cache
+# line) share the cache, which is how it is laid out.
+CACHE_CHECK = $(NM) -t d $(1) | awk \
 	'/_cache0$$/ { a[substr($$3, 1, length($$3) - 7)] = $$1 } \
 	 /_cache1$$/ { n = substr($$3, 1, length($$3) - 7); s = $$1 - a[n]; \
-	   if (s > 240) { print "*** " n ": " s " bytes, over 240"; bad = 1 } } \
+	   if (s > $(2)) { print "*** " n ": " s " bytes, over $(2)"; bad = 1 } } \
 	 END { exit bad }'
 
 $(DISTDIR)/$(TARGETTT):	$(OBJSTT) | $(DISTDIR)
-	@$(call C2P_CACHE_CHECK,$(OBJDIR)/atari_c2p.tt.o)
+	@$(call CACHE_CHECK,$(OBJDIR)/atari_c2p.tt.o,240)
+	@$(call CACHE_CHECK,$(OBJDIR)/p_sight.tt.o,288)
 	$(CC) $(CFLAGSTT) $(OBJSTT) -o $@ $(LDLIBSTT)
 
 $(OBJDIR)/%.tt.o:	%.c | $(OBJDIR)

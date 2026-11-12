@@ -112,6 +112,11 @@ void P_RunThinkers (void)
 	    currentthinker->prev->next = currentthinker->next;
 	    Z_Free (currentthinker);
 	}
+	else if (currentthinker->function.acp1 == (actionf_p1)P_MobjThinker)
+	{
+	    // most thinkers are things, and most of those are still
+	    P_MobjThinkerInline ((mobj_t *)currentthinker);
+	}
 	else
 	{
 	    if (currentthinker->function.acp1)

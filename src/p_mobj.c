@@ -410,9 +410,11 @@ P_NightmareRespawn (mobj_t* mobj)
 
 
 //
-// P_MobjThinker
+// P_MobjThinkerMoving
+// id's P_MobjThinker, whole: for a thing with momentum or off the floor.
+// The rest take P_MobjThinkerInline (p_local.h).
 //
-void P_MobjThinker (mobj_t* mobj)
+__attribute__((noinline)) void P_MobjThinkerMoving (mobj_t* mobj)
 {
     // momentum movement
     if (mobj->momx
@@ -470,6 +472,39 @@ void P_MobjThinker (mobj_t* mobj)
 	P_NightmareRespawn (mobj);
     }
 
+}
+
+
+//
+// P_MobjRespawnCheck
+// The end of id's P_MobjThinker for a thing in its last state: a dead
+// monster's count towards its nightmare respawn.
+//
+__attribute__((noinline)) void P_MobjRespawnCheck (mobj_t* mobj)
+{
+    mobj->movecount++;
+
+    if (mobj->movecount < 12*35)
+	return;
+
+    if ( leveltime&31 )
+	return;
+
+    if (P_Random () > 4)
+	return;
+
+    P_NightmareRespawn (mobj);
+}
+
+
+//
+// P_MobjThinker
+// A mobj's thinker function (and what marks a thinker as a mobj).
+// P_RunThinkers runs P_MobjThinkerInline itself.
+//
+void P_MobjThinker (mobj_t* mobj)
+{
+    P_MobjThinkerInline (mobj);
 }
 
 

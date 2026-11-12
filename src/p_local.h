@@ -116,6 +116,44 @@ P_SpawnMobj
 void 	P_RemoveMobj (mobj_t* th);
 boolean	P_SetMobjState (mobj_t* mobj, statenum_t state);
 void 	P_MobjThinker (mobj_t* mobj);
+void	P_MobjThinkerMoving (mobj_t* mobj);
+void	P_MobjRespawnCheck (mobj_t* mobj);
+
+// P_MobjThinker. Most things most tics have no momentum and are on the
+// floor, and only count their state down: that much is here, short enough
+// to sit in P_RunThinkers' loop, and the rest out of line. id's tests in
+// id's order: with neither movement test true, his function came straight
+// to the state countdown.
+extern boolean	respawnmonsters;
+
+static inline void P_MobjThinkerInline (mobj_t* mobj)
+{
+    if (mobj->momx
+	|| mobj->momy
+	|| (mobj->flags&MF_SKULLFLY)
+	|| (mobj->z != mobj->floorz)
+	|| mobj->momz )
+    {
+	P_MobjThinkerMoving (mobj);
+	return;
+    }
+
+    // cycle through states,
+    // calling action functions at transitions
+    if (mobj->tics != -1)
+    {
+	mobj->tics--;
+		
+	// you can cycle through multiple states in a tic
+	if (!mobj->tics)
+	    P_SetMobjState (mobj, mobj->state->nextstate);
+    }
+    else if ((mobj->flags & MF_COUNTKILL) && respawnmonsters)
+    {
+	// check for nightmare respawn
+	P_MobjRespawnCheck (mobj);
+    }
+}
 
 void	P_SpawnPuff (fixed_t x, fixed_t y, fixed_t z);
 void 	P_SpawnBlood (fixed_t x, fixed_t y, fixed_t z, int damage);

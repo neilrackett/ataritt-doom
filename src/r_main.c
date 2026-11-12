@@ -169,23 +169,25 @@ R_PointOnSide
     fixed_t	left;
     fixed_t	right;
 	
+    // The node's line is in whole map units (r_defs.h): id's tests on its
+    // fixed_t values, which were these << FRACBITS.
     if (!node->dx)
     {
-	if (x <= node->x)
+	if (x <= ((fixed_t)node->x << FRACBITS))
 	    return node->dy > 0;
 	
 	return node->dy < 0;
     }
     if (!node->dy)
     {
-	if (y <= node->y)
+	if (y <= ((fixed_t)node->y << FRACBITS))
 	    return node->dx < 0;
 	
 	return node->dx > 0;
     }
 	
-    dx = (x - node->x);
-    dy = (y - node->y);
+    dx = (x - ((fixed_t)node->x << FRACBITS));
+    dy = (y - ((fixed_t)node->y << FRACBITS));
 	
     // Try to quickly decide by looking at sign bits.
     if ( (node->dy ^ node->dx ^ dx ^ dy)&0x80000000 )
@@ -198,8 +200,8 @@ R_PointOnSide
 	return 0;
     }
 
-    left = FixedMul ( node->dy>>FRACBITS , dx );
-    right = FixedMul ( dy , node->dx>>FRACBITS );
+    left = FixedMul ( node->dy , dx );
+    right = FixedMul ( dy , node->dx );
 	
     if (right < left)
     {
@@ -804,6 +806,97 @@ void R_Init (void)
 //
 // R_PointInSubsector
 //
+#ifdef FIXEDMUL_MULS64
+// R_PointInSubsector's walk down the BSP, R_PointOnSide at each node, as a
+// loop that stays in a 68030's instruction cache: every thing that moves
+// walks the tree twice a move, and the C took 95 cycles a node. The same
+// tests on the same values; the two FixedMuls are its 64-bit muls.l, so
+// not for a 68060 (fixedmul_muls64). Returns the subsector's node number.
+#include "asmsym.h"
+
+ASM_CDECL int R_PointNodeWalk (fixed_t x, fixed_t y, int nodenum,
+			       const node_t* nodes);
+
+__asm__ (
+"	.text\n"
+"	.even\n"
+"	.globl	" ASM_SYM(R_PointNodeWalk) "\n"
+ASM_SYM(R_PointNodeWalk) ":\n"
+"	movem.l	%d2-%d6,-(%sp)\n"
+"	move.l	24(%sp),%d3\n"			// x
+"	move.l	28(%sp),%d4\n"			// y
+"	move.l	32(%sp),%d0\n"
+"	move.l	36(%sp),%a1\n"
+".Lwalk_node:\n"
+"	lea	(%a1,%d0.w*8),%a0\n"		// nodes are 16 bytes
+"	lea	(%a0,%d0.w*8),%a0\n"
+"	move.w	4(%a0),%d1\n"			// dx
+"	jbne	.Lwalk_1\n"
+"	move.w	(%a0),%d2\n"			// the line is x = node x
+"	swap	%d2\n"
+"	clr.w	%d2\n"
+"	cmp.l	%d2,%d3\n"
+"	jbgt	.Lwalk_0\n"
+"	tst.w	6(%a0)\n"			// x <= node x: dy > 0
+"	sgt	%d2\n"
+"	jbra	.Lwalk_bool\n"
+".Lwalk_0:\n"
+"	tst.w	6(%a0)\n"			// dy < 0
+"	slt	%d2\n"
+"	jbra	.Lwalk_bool\n"
+".Lwalk_1:\n"
+"	move.w	6(%a0),%d2\n"			// dy
+"	jbne	.Lwalk_2\n"
+"	move.w	2(%a0),%d2\n"			// the line is y = node y
+"	swap	%d2\n"
+"	clr.w	%d2\n"
+"	cmp.l	%d2,%d4\n"
+"	jbgt	.Lwalk_3\n"
+"	tst.w	%d1\n"				// y <= node y: dx < 0
+"	slt	%d2\n"
+"	jbra	.Lwalk_bool\n"
+".Lwalk_3:\n"
+"	tst.w	%d1\n"				// dx > 0
+"	sgt	%d2\n"
+".Lwalk_bool:\n"
+"	and.w	#1,%d2\n"
+"	move.w	8(%a0,%d2.w*2),%d0\n"		// the child on that side
+"	jbpl	.Lwalk_node\n"
+"	and.l	#0xffff,%d0\n"
+"	movem.l	(%sp)+,%d2-%d6\n"
+"	rts\n"
+".Lwalk_2:\n"
+"	move.l	%d3,%d5\n"			// x - node x, y - node y: their
+"	swap	%d5\n"				// high words
+"	sub.w	(%a0),%d5\n"
+"	move.l	%d4,%d6\n"
+"	swap	%d6\n"
+"	sub.w	2(%a0),%d6\n"
+"	move.w	%d2,%d0\n"			// decided by the signs?
+"	eor.w	%d1,%d0\n"
+"	eor.w	%d5,%d0\n"
+"	eor.w	%d6,%d0\n"
+"	jbpl	.Lwalk_4\n"
+"	eor.w	%d5,%d2\n"			// back if left is negative
+"	smi	%d2\n"
+"	jbra	.Lwalk_bool\n"
+".Lwalk_4:\n"
+"	swap	%d5\n"
+"	swap	%d6\n"
+"	ext.l	%d2\n"
+"	ext.l	%d1\n"
+"	muls.l	%d2,%d0:%d5\n"			// left = FixedMul (dy, x - node x)
+"	move.w	%d0,%d5\n"
+"	swap	%d5\n"
+"	muls.l	%d1,%d0:%d6\n"			// right = FixedMul (y - node y, dx)
+"	move.w	%d0,%d6\n"
+"	swap	%d6\n"
+"	cmp.l	%d5,%d6\n"
+"	sge	%d2\n"				// front (0) if right < left
+"	jbra	.Lwalk_bool\n"
+);
+#endif
+
 subsector_t*
 R_PointInSubsector
 ( fixed_t	x,
@@ -818,6 +911,12 @@ R_PointInSubsector
 	return subsectors;
 		
     nodenum = numnodes-1;
+
+#ifdef FIXEDMUL_MULS64
+    if (fixedmul_muls64)
+	return &subsectors[R_PointNodeWalk (x, y, nodenum, nodes)
+			   & ~NF_SUBSECTOR];
+#endif
 
     while (! (nodenum & NF_SUBSECTOR) )
     {

@@ -97,6 +97,14 @@ extern subsector_t*	subsectors;
 
 extern int		numnodes;
 extern node_t*		nodes;
+extern nodebbox_t*	nodebbox;
+
+// For each seg, what a sight check needs of it
+extern sightseg_t*	sightsegs;
+extern sightsub_t*	sightsubs;
+
+// For each line: == validcount, already checked
+extern int*		linevalid;
 
 extern int		numlines;
 extern line_t*		lines;

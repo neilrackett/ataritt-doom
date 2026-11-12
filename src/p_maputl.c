@@ -492,12 +492,11 @@ P_BlockLinesIterator
 
     for ( list = blockmaplump+offset ; *list != -1 ; list++)
     {
-	ld = &lines[*list];
-
-	if (ld->validcount == validcount)
+	if (linevalid[*list] == validcount)
 	    continue; 	// line has already been checked
 
-	ld->validcount = validcount;
+	linevalid[*list] = validcount;
+	ld = &lines[*list];
 		
 	if ( !func(ld) )
 	    return false;
