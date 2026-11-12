@@ -556,9 +556,9 @@ Anything that reads or publishes Xpad: read
   2 bytes off a long, and then every long the 68030 reads from it takes two
   bus cycles. `I_AllocAligned` puts the zone and `screens` on 16 bytes, but
   the program itself loads wherever the free memory starts: 2 bytes off,
-  demo3 low ran 4.4% slower (gcc 4.6.4) or 1.4% (LTO + PGO) under Hatari.
-  Compare timings only at the same load alignment: the start-up line prints
-  where the zone and the program are.
+  demo3 low ran 4.4% slower (gcc 4.6.4) or 1.4% (LTO + PGO) under Hatari,
+  and 8.1% or 2.6% on a real TT. Compare timings only at the same load
+  alignment: the start-up line prints where the zone and the program are.
 
 ### Testing in Hatari
 
@@ -583,7 +583,9 @@ commit: `@HEAD` is the baseline without your changes); `run.sh LABEL MODE
 or `high` (size 10), optionally with `nodraw` (game logic a tic), `nosfx`
 or `nosound`; `DEMO=demo2`, `MACHINE=falcon` (EmuTOS 512k in `$ETOS512`,
 VGA) or `ste` (STDOOM), `EXTRAARGS` (`-benchshot N`, `-mixtest`,
-`-c2ptest`, `-cacr X`) and `TAG` (to tell parallel runs apart). The patch
+`-c2ptest`, `-cacr X`, `-benchzone KB`, `-noblit`: no C2P or page flip,
+so a run without it less one with it is the C2P) and `TAG` (to tell
+parallel runs apart). The patch
 (`benchpatch.py`) reads arguments from `ARGS.TXT` (Hatari can't pass them
 to an autostarted program), ends demos at tic 600 and adds the dumps and
 self-tests. The TT is the target: TOS 3.06, `--machine tt --mmu off
@@ -608,16 +610,34 @@ and up to six parallel runs are fine.
   so a frame is R / (1 - T/28.6 ms), R the timedemo frame less a tic (T,
   from `nodraw`).
 - **Real hardware:** `tools/bench/ttkit.sh` builds a kit in `tmp/ttkit`:
-  the three dist builds as `GCC4.TTP`, `LTO.TTP` and `PGO.TTP`, the WAD,
+  benchmark builds (600 tics, `BENCH STATE`) with gcc 4.6.4, gcc 13 + LTO
+  and + PGO as `GCC4.TTP`, `LTO.TTP` and `PGO.TTP`, the WAD,
   `LOW.CFG`/`HIGH.CFG` (size 10, for `-config`) and `BENCH.TOS`
-  (`ttbench.c`), which runs `BENCH.TXT`'s timedemos unattended and writes
-  `RESULTS.TXT`. Each run's stdout and stderr go to `RUNn.LOG` and its
-  stdin comes from an empty file, so `I_Error`'s `getchar()` returns at
-  once. Each program loads with its text on 16 bytes (`+N` in `BENCH.TXT`
-  for N past): a pad block in front of the largest free block, corrected
-  after a trial load (`Pexec` mode 3), since TOS puts the copy of the
-  environment there first. The `BENCH.TXT` notes are the same runs under
-  Hatari (`BENCH.TOS` on the TT setup above).
+  (`ttbench.c`), which runs `BENCH.TXT`'s timedemos unattended (6 runs,
+  about 12 minutes on a TT) and writes `RESULTS.TXT`. Each run's output
+  goes to `RUNn.LOG`: `BENCH.TOS` passes `-benchlog RUNn.LOG` and the
+  benchmark build sends its stdout and stderr there itself, and its
+  `I_Error` doesn't wait for a key. Redirecting the handles in `BENCH.TOS`
+  before `Pexec` (`Fforce`) works under Hatari, whose drive emulation
+  handles it, but not on Neil's TT (TOS 3.06, the kit on an ACSI2STM
+  drive, whose GemDrive mode also hooks the GEMDOS calls itself): the
+  program wrote to the screen and read the keyboard, and the logs stayed
+  empty. Each program loads with its
+  text on 16 bytes (`+N` in `BENCH.TXT` for N past): a pad block in front
+  of the largest free block, corrected after a trial load (`Pexec` mode
+  3), since TOS puts the copy of the environment there first. `BENCH.TOS`
+  loads and allocates in ST-RAM (`ttkit.sh` sets its program flags), so
+  the zone is what it would be from the desktop: in TT-RAM it took 350K
+  there, and on Neil's TT the zone came out at 1.83 MB. The benchmark
+  builds print `BENCH READS`, the lumps read while the demo was timed
+  (Doom doesn't precache a level for a demo, so a timedemo reads each
+  texture, flat and sprite as it comes into view, and again once the zone
+  has purged it): demo3, 600 tics, read 50 lumps (303K) with a 2.5 MB
+  zone and 296 (979K) with 1.83 MB (`-benchzone KB` caps the zone). That
+  costs nothing under Hatari's drive emulation and real time on a TT.
+  `ttkit.sh` runs the finished kit once under Hatari (the TT setup above)
+  and notes each run's realtics there in `BENCH.TXT`, which `RESULTS.TXT`
+  gives the ratio to.
 
 ### Where the time goes (Hatari, size 10, 600-tic timedemo)
 
@@ -651,9 +671,10 @@ play (about 4 tics a frame) that makes TT low ~150 -> ~106 ms (6.6 ->
   every 500 ns (about 8 MB/s), so a 320x480 page (153,600 bytes) takes at
   least 19 ms of stores there. It charges 2 clocks for each of a burst
   fill's three extra longs, where a 68030 can take 1: with data bursts off
-  (`-cacr 0111`) TTDOOM runs 10% faster under Hatari, which a real TT-RAM
-  may not. Compare builds in Hatari; take absolute times and anything
-  bound by ST-RAM to a real TT.
+  (`-cacr 0111`) TTDOOM runs 9-10% faster under Hatari and no faster on a
+  real TT (below). Compare builds in Hatari, but take absolute times,
+  anything bound by ST-RAM and gains of a few percent to a real TT: LTO's
+  2.3% didn't show there.
 - **Write allocate** off (`-cacr 1111` against TOS's `3111`): 0.5% under
   Hatari.
 - **-O2 times the same as -O3; -Os is 7% slower.**
@@ -715,33 +736,119 @@ play (about 4 tics a frame) that makes TT low ~150 -> ~106 ms (6.6 ->
   85.2 -> 82.9 ms, high 131.9 -> 128.6 -> 124.5; demo3 low 87.7 -> 85.9
   -> 83.5. Every demo plays to its last tic.
 
+### On a real TT (2026-11-12)
+
+Neil's TT030 (TOS 3.06, 2 MB + 4 MB TT-RAM, VGA, the kit on an ACSI2STM
+drive in GemDrive mode), `ttkit.sh`'s benchmark builds: demo3, 600 tics,
+size 10, the program on 16 bytes unless `+2`. Every run gave demo3's hash,
+`c3d20ea1`, and identical runs differed by at most 0.08%.
+
+The second round, BENCH.TOS in ST-RAM. The TT's own drivers and
+accessories hold 515K of TT-RAM, so the zone was 2.15 MB, against
+Hatari's full 2.5 MB:
+
+|                                 | TT, ms | Hatari | TT / Hatari |
+| ------------------------------- | ------ | ------ | ----------- |
+| gcc 4.6.4, low                  | 183.7  | 97.2   | 1.89        |
+| gcc 13 + LTO, low               | 184.1  | 95.5   | 1.93        |
+| + PGO, low                      | 175.8  | 93.0   | 1.89        |
+| + PGO, high                     | 253.6  | 138.6  | 1.83        |
+| + PGO, low, 1.83 MB zone        | 182.1  | 93.0   | 1.96        |
+| + PGO, game logic a tic         | 14.8   | 7.3    | 2.03        |
+
+The third round, the C2P (a run less its `-noblit` run) and demo1:
+
+|                                | TT, ms | Hatari | TT / Hatari |
+| ------------------------------ | ------ | ------ | ----------- |
+| demo3 low: frame               | 176.9  | 93.2   | 1.90        |
+| demo3 low: C2P                 | 33.5   | 21.2   | 1.58        |
+| demo3 high: frame              | 254.7  | 138.9  | 1.83        |
+| demo3 high: C2P                | 37.7   | 25.7   | 1.47        |
+| demo1 low: frame               | 147.8  | 80.9   | 1.83        |
+| demo1: game logic a tic        | 12.0   | 5.9    | 2.04        |
+
+The first round, BENCH.TOS in TT-RAM, so the zone was 1.83 MB:
+
+|                          | TT, ms | Hatari | TT / Hatari |
+| ------------------------ | ------ | ------ | ----------- |
+| gcc 4.6.4, low           | 191.6  | 97.5   | 1.97        |
+| gcc 13 + LTO, low        | 191.4  | 95.2   | 2.01        |
+| + PGO, low               | 182.1  | 93.0   | 1.96        |
+| + PGO, high              | 259.8  | 138.5  | 1.88        |
+| + PGO, low, `+2`         | 186.9  | 93.9   | 1.99        |
+| gcc 4.6.4, low, `+2`     | 207.0  | 100.7  | 2.06        |
+| + PGO, low, `-cacr 0111` | 182.2  | 84.5   | 2.16        |
+
+- **A TT takes about twice Hatari's time:** 1.9 for a frame and 2.0 for
+  the game logic. Another project measured 2.2 for compiled code and 1.5
+  for a loop that stays in the instruction cache. High detail's extra
+  time, mostly the drawers' inner loops, is 1.7 times Hatari's.
+- **The game logic is half of real play on a TT.** At 14.8 ms a tic
+  (demo3), 35 tics a second take 52% of the CPU (demo1, 12.0 ms: 42%).
+  Real play (see "Real play" above, less the timedemo's lump reads) works
+  out at about 327 ms a frame, 3.1 fps, in low detail and 488 ms, 2.1
+  fps, in high detail (demo1 low: 227 ms, 4.4 fps). With the game logic
+  that big, cutting it by a tenth gains as much as cutting the frame by a
+  tenth.
+- **The C2P is a fifth of a frame and a tenth of real play on a TT:**
+  33.5 ms in low detail (19% of the frame), 37.7 ms in high (15%). In
+  real play that is 10% of the CPU in demo3 (8% high, about 15% in
+  demo1), against 52% for the game logic: a C2P a fifth faster would make
+  demo3 low 4% faster, a game logic a fifth faster 18%. It takes 1.5-1.6
+  times Hatari's time, as a loop in the instruction cache does, against
+  1.9-2.0 for the rest of the frame: not bound by ST-RAM's stores (a page
+  is at least 19 ms of them).
+- **PGO is what pays on a TT:** 4-5% over gcc 4.6.4. LTO alone is no
+  faster there (0.2% slower in the second round, though 2.3% faster under
+  Hatari), so the release (gcc 13 + LTO, no PGO) runs at gcc 4.6.4's speed.
+- **Lump reads:** demo3 read 126 lumps (439K) with the 2.15 MB zone and
+  296 (979K) with 1.83 MB. The extra 170 took 3.6% of the run, about 22 ms
+  a lump from ACSI2STM in GemDrive mode. Hatari's full zone reads 50
+  lumps, and its reads take no emulated time. In real play the level is
+  precached, but a zone that can't hold it re-reads lumps mid-level.
+- **Load alignment costs 2.5 times what Hatari shows**: 2.6% (PGO) and
+  8.1% (gcc 4.6.4) against 1.0% and 3.3%.
+- **Data bursts:** `-cacr 0111` changes nothing on a TT, where Hatari runs
+  9% faster. The default stays `1111`.
+
 ### Possible follow-ups (TTDOOM)
 
-- **Time on real hardware.** Everything above was measured in Hatari, whose
-  68030 timing is approximate. A real Falcon refills its instruction cache
-  from ST-RAM over a 16-bit bus, so the loops' cache fit may count for
-  more there.
+- **Time on a real Falcon.** A TT is timed above. A real Falcon refills its
+  instruction cache from ST-RAM over a 16-bit bus, so the loops' cache fit
+  may count for more there.
+- **Game logic: the biggest lever on a TT.** It is half of real play
+  there (above), and a fifth off it would gain 18%, where a fifth off the
+  C2P gains 4%. It takes twice Hatari's time throughout, so Hatari's
+  `nodraw` profiles rank it right: 7.3 ms a tic for demo3, where
+  `P_CrossSubsector`, `P_MobjThinker` and `P_CrossBSPNode` lead.
+- **PGO for the release** (it is 4-5% on a TT, where LTO alone gained
+  nothing): CI builds TTDOOM with gcc 13 + LTO, and the training needs
+  Hatari, a TOS image and the WAD, which CI doesn't have (`pgo.sh --dist`
+  runs locally).
+- **Hot static data on 16 bytes whatever the load address.** The program
+  loads where GEMDOS puts it, and 2 bytes off a long costs 2.6% on a TT.
+  Find which static arrays matter (Hatari profiles of a `+2` run against
+  an aligned one) and move them into an aligned allocation.
 - **Spread the zoomed views' stores.** `C2P8_MERGE_FN` (sizes 3-5) still
   stores 2, 4 or 8 copies of each group in one burst. With more stores than
   merges, measure whether spreading still pays.
-- **On a real TT:** time `-cacr 0111` (data bursts off) and `3111` (TOS's)
-  against the default `1111`; time the C2P against a build writing each line
-  once, to see whether ST-RAM's 500 ns slots bound it; and the mixer's
-  ST-RAM saving, which Hatari understates.
-- **TT line doubling in hardware (rejected for now).** Rewriting the TT's
-  video counter from Timer B each line would display each line twice for
-  free, but costs about 14,400 interrupts a second (about 7% of the CPU)
-  to save the second line's stores (1.4 ms in Hatari). Only if a real TT
-  shows the C2P bound by ST-RAM.
+- **On a real TT:** the mixer's ST-RAM saving, which Hatari understates.
+  (The C2P there scales like an in-cache loop, 1.5-1.6 times Hatari, so
+  ST-RAM's stores don't bound it.)
+- **TT line doubling in hardware (rejected).** Rewriting the TT's video
+  counter from Timer B each line would display each line twice for free,
+  but costs about 14,400 interrupts a second (about 7% of the CPU) to
+  save the second line's stores (1.4 ms in Hatari). Only worth it if the
+  C2P were bound by ST-RAM, which a real TT shows it isn't.
 - **Scrambled chunky layout (rejected).** Pixels stored in the order the
   C2P's 8-bit pass produces would drop that pass (19% of a group's
   instructions) and cost columns nothing (`columnofs`), but spans,
   patches, wipes, the automap and screenshots would all need the order,
   and a span loop absorbing it doesn't fit the instruction cache.
-- **The toolchain, what's left** (gcc 13, LTO and PGO: see above): PGO for
-  the release (CI builds TTDOOM with gcc 13 + LTO; the PGO training needs
-  Hatari, a TOS image and the WAD: `pgo.sh --dist` runs locally); value profiling (needs thread-local storage in a TOS program);
-  tuning flags for gcc 13; vasm modules for the drawers and C2P.
+- **The toolchain, what's left** (gcc 13, LTO and PGO: see above; PGO for
+  the release has its own item): value profiling (needs thread-local
+  storage in a TOS program); tuning flags for gcc 13; vasm modules for the
+  drawers and C2P.
 - **`-mfastcall`: measured, not adopted.** Vincent Rivière's gcc 4.6.4 and
   13.3 (the toolkit's) don't have it; Thorsten Otto's Crossmint gcc does,
   with fastcall builds of libgcc, MiNTLib and fdlibm (what upstream STDOOM

@@ -15,9 +15,13 @@
  * varies from machine to machine, so the program is first loaded without
  * running it (Pexec mode 3) to see where it lands, and the pad corrected.
  *
- * Each run's output goes to RUNn.LOG: stdout and stderr are redirected to
- * it, and stdin to an empty file, so I_Error's getchar() after "timed N
- * gametics in R realtics" returns at once and the next run starts.
+ * Each run's output goes to RUNn.LOG: the program is passed -benchlog
+ * RUNn.LOG, and the benchmark builds (benchpatch.py) send their stdout and
+ * stderr there themselves. Redirecting the handles here before Pexec
+ * (Fforce) worked under Hatari, whose drive emulation handles it, but on
+ * a real TT (TOS 3.06) the program still wrote to the screen and read the
+ * keyboard. The benchmark builds also don't wait for a key after "timed N
+ * gametics in R realtics", so the next run starts at once.
  * RESULTS.TXT is appended to and closed after every run, so a crash keeps
  * the runs before it.
  */
@@ -53,15 +57,16 @@ static void copy(char *d, const char *s, size_t n)
     d[n - 1] = 0;
 }
 
-/* The run's result and two start-up lines, from its log */
+/* The run's result, two start-up lines and a benchmark build's game state
+ * hash and lump reads, from its log */
 static void scan_log(const char *name, long *gt, long *rt, char *caches,
-                     char *mem)
+                     char *mem, char *state, char *reads)
 {
     char line[256], *p;
     FILE *f = fopen(name, "r");
 
     *gt = *rt = -1;
-    caches[0] = mem[0] = 0;
+    caches[0] = mem[0] = state[0] = reads[0] = 0;
     if (!f)
         return;
     while (fgets(line, sizeof line, f))
@@ -73,6 +78,10 @@ static void scan_log(const char *name, long *gt, long *rt, char *caches,
             copy(caches, p, LINE);
         else if (strstr(line, "allocated at"))
             copy(mem, line, LINE);
+        else if ((p = strstr(line, "BENCH STATE ")) != NULL)
+            copy(state, p, LINE);
+        else if ((p = strstr(line, "BENCH READS ")) != NULL)
+            copy(reads, p, LINE);
     }
     fclose(f);
 }
@@ -156,7 +165,9 @@ int main(void)
 {
     static char runs[MAXRUNS][LINE];
     char buf[LINE * 2], line[LINE * 3], prog[LINE], file[LINE], note[LINE];
-    char tail[128], logname[16], caches[LINE], mem[LINE];
+    char tail[128], logname[16], caches[LINE], mem[LINE], state[LINE];
+    char reads[LINE];
+    char cmd[LINE + 32];
     int nruns = 0, i;
     FILE *f = fopen("BENCH.TXT", "r");
 
@@ -174,19 +185,13 @@ int main(void)
     }
     fclose(f);
 
-    {
-        long e = Fcreate("EMPTY.TXT", 0);
-
-        if (e >= 0)
-            Fclose((short)e);
-    }
     sprintf(line, "BENCH: %d runs", nruns);
     report(line);
 
     for (i = 0; i < nruns; i++)
     {
         char *args, *p;
-        long lh, in, h0, h1, h2, r, gt, rt, at;
+        long r, gt, rt, at;
         int off = 0;
         size_t n;
 
@@ -207,12 +212,6 @@ int main(void)
         n = strcspn(args, " \t");
         copy(prog, args, n + 1 < LINE ? n + 1 : LINE);
         args = skip(args + n);
-        n = strlen(args);
-        if (n > 124)
-            n = 124;
-        tail[0] = (char)n;
-        memcpy(tail + 1, args, n);
-        tail[n + 1] = 0;
 
         /* The program's name in the results: +N for one loaded off */
         copy(file, prog, LINE);
@@ -222,36 +221,22 @@ int main(void)
             copy(prog, line, LINE);
         }
 
+        /* The command line, with the log for the program to write */
         sprintf(logname, "RUN%d.LOG", i + 1);
+        sprintf(cmd, "%s -benchlog %s", args, logname);
+        n = strlen(cmd);
+        if (n > 124)
+            n = 124;
+        tail[0] = (char)n;
+        memcpy(tail + 1, cmd, n);
+        tail[n + 1] = 0;
+
         printf("BENCH %d/%d: %s %s\n", i + 1, nruns, prog, args);
         fflush(stdout);
-
-        lh = Fcreate(logname, 0);
-        in = Fopen("EMPTY.TXT", 0);
-        if (lh < 0 || in < 0)
-        {
-            sprintf(line, "%-2d %s %s: can't open %s or EMPTY.TXT",
-                    i + 1, prog, args, logname);
-            report(line);
-            continue;
-        }
-        h0 = Fdup(0);
-        h1 = Fdup(1);
-        h2 = Fdup(2);
-        Fforce(0, (short)in);
-        Fforce(1, (short)lh);
-        Fforce(2, (short)lh);
+        Fdelete(logname);
         r = run_aligned(file, tail, off, &at);
-        Fforce(0, (short)h0);
-        Fforce(1, (short)h1);
-        Fforce(2, (short)h2);
-        Fclose((short)h0);
-        Fclose((short)h1);
-        Fclose((short)h2);
-        Fclose((short)in);
-        Fclose((short)lh);
 
-        scan_log(logname, &gt, &rt, caches, mem);
+        scan_log(logname, &gt, &rt, caches, mem, state, reads);
         if (gt > 0 && rt > 0)
         {
             /* ms a frame and fps, to one and two decimals */
@@ -284,6 +269,16 @@ int main(void)
         if (mem[0])
         {
             sprintf(line, "     %s", mem);
+            report(line);
+        }
+        if (state[0])
+        {
+            sprintf(line, "     %s", state);
+            report(line);
+        }
+        if (reads[0])
+        {
+            sprintf(line, "     %s", reads);
             report(line);
         }
     }

@@ -4,10 +4,24 @@
 #
 # - main() takes its arguments from ARGS.TXT when started without any:
 #   Hatari can't pass arguments to an autostarted program.
+# - -benchlog NAME: stdout and stderr go to that file (BENCH.TOS, ttbench.c,
+#   passes RUNn.LOG): on a real TT (TOS 3.06) the GEMDOS redirection BENCH
+#   set up before Pexec didn't reach the program, which wrote to the screen
+#   and read the keyboard.
 # - A demo ends at gametic 600, and prints "BENCH READY" (in main),
 #   "BENCH START" (the first demo tic) and, at the end, "BENCH STATE": a hash
 #   of every mobj's position, motion, angle, health and state and the random
 #   index. Builds whose game logic is the same print the same hash.
+# - I_Error (where every timedemo ends) doesn't wait for a key, so
+#   BENCH.TOS runs on unattended.
+# - "BENCH READS": the lumps read from the WAD while the demo was timed
+#   (Doom doesn't precache a level for a demo), which cost no emulated time
+#   under Hatari and real time on a TT.
+# - -benchzone KB: a zone no bigger than that, as on a machine with less
+#   free memory.
+# - -noblit (TTDOOM): no C2P and no page flip (id parsed it "for
+#   comparative timing purposes" and never used it): a run without it, less
+#   one with it, is what the C2P costs.
 # - -benchshot N (repeatable): screens[0] at gametic N to SN.RAW (320x240
 #   palette indices) and the TT Low page it was converted to, to PN.RAW
 #   (shots.py and pagecheck.py compare them).
@@ -44,6 +58,18 @@ s = s.replace("""    myargc = argc;
 	    argc = n;
 	    argv = bench_argv;
 	}
+    }
+    {
+	// -benchlog NAME: stdout and stderr to that file (BENCH.TOS). The
+	// parent's GEMDOS redirection didn't reach the program on a real TT.
+	int k;
+	for (k = 1; k < argc - 1; k++)
+	    if (!strcmp (argv[k], "-benchlog"))
+	    {
+		if (freopen (argv[k + 1], "w", stdout))
+		    stderr = stdout;
+		break;
+	    }
     }
     fprintf (stderr, "BENCH READY\\n");
     fflush (stderr);
@@ -95,6 +121,16 @@ p.write_text(s)
 
 p = root / "src/i_video.c"
 s = p.read_text()
+# -noblit (TTDOOM; id parsed it and never used it): no C2P and no page
+# flip, so a run without it, less one with it, is the C2P on any machine
+old = "        since_last(bar, dirtybox, last_bar);"
+assert old in s
+s = s.replace(old, """        {
+            extern boolean noblit;
+            if (noblit)
+                return;
+        }
+""" + old, 1)
 old = "        st_screen = atari_vmode_draw_page();"
 assert old in s
 s = s.replace(old, """        {
@@ -307,5 +343,51 @@ has_mix = "mix_first_channel" in (root / "src/i_sound.c").read_text()
 has_pair = "c2p8_pairbox" in (root / "src/atari_c2p.c").read_text()
 s += "\n#if !defined(__M68020__)%s\nvoid bench_mixtest(void) {}\n#endif\n" % ("" if has_mix else " || 1")
 s += "#if !defined(TTDOOM)%s\nvoid bench_c2ptest(void) {}\n#endif\n" % ("" if has_pair else " || 1")
+p.write_text(s)
+p = root / "src/i_system.c"
+s = p.read_text()
+old = "    getchar();\n    exit(-1);"
+assert old in s
+s = s.replace(old, "    exit(-1);", 1)
+# -benchzone KB: a zone no bigger than that, as on a machine with less
+# free memory (a real TT's desk accessories and drivers)
+old = "    unsigned long memavail = Malloc(-1);"
+assert old in s
+s = s.replace(old, """    {
+	int p = M_CheckParm ("-benchzone");
+	if (p && p < myargc - 1 && atoi (myargv[p + 1]) * 1024 < *size)
+	    *size = atoi (myargv[p + 1]) * 1024;
+    }
+""" + old, 1)
+p.write_text(s)
+
+# BENCH READS: the lumps read from the WAD while the demo is timed. Doom
+# doesn't precache a level for a demo, so a timedemo reads each texture,
+# flat and sprite when it first comes into view, and again after the zone
+# purges it: no time under Hatari's drive emulation, real time on a TT.
+p = root / "src/w_wad.c"
+s = p.read_text()
+old = "    lseek (handle, l->position, SEEK_SET);\n    c = read (handle, dest, l->size);\n"
+assert old in s
+s = s.replace(old, old + "    bench_reads++;\n    bench_readbytes += l->size;\n", 1)
+old = "\nvoid\nW_ReadLump\n("
+assert s.count(old) == 1
+s = s.replace(old, "\nint bench_reads, bench_readbytes;\n" + old, 1)
+p.write_text(s)
+p = root / "src/g_game.c"
+s = p.read_text()
+old = "    starttime = I_GetTime (); \n"
+assert old in s
+s = s.replace(old, old + "    { extern int bench_reads, bench_readbytes; bench_reads = bench_readbytes = 0; }\n", 1)
+old = """	fprintf (stderr, "BENCH STATE tic %d mobjs %d rnd %d hash %08lx\\n",
+		 gametic, n, prndindex, h);
+"""
+assert old in s
+s = s.replace(old, old + """	{
+	    extern int bench_reads, bench_readbytes;
+	    fprintf (stderr, "BENCH READS %d lumps, %d bytes\\n",
+		     bench_reads, bench_readbytes);
+	}
+""", 1)
 p.write_text(s)
 print("patched", root)
