@@ -7,7 +7,9 @@
 # and the BENCH STATE game-state hash.
 #
 # MODE: low | high (detail, screenblocks 10), with an optional suffix:
-#   nodraw (-nodraw -nosound: the game logic a tic), nosfx, nosound.
+#   nodraw (-nodraw -nosound: the game logic a tic), nosfx, nosound;
+#   play (-playdemo at a real TT's pace: frames a second and game speed
+#   in real play, where TryRunTics runs up to 5 tics a frame).
 # prof: also a per-function profile of the demo, from its first tic, in the
 # run's log; profagg.py sums it per function.
 #
@@ -17,7 +19,12 @@
 #            falcon: EmuTOS 512k ($ETOS512), VGA (or MON=rgb), 14 MB
 #            ste: TOS 1.62, 4 MB, for STDOOM (mkbuild.sh LABEL SRC stdoom)
 #   DEMO     demo1 (default), demo2, demo3
-#   EXTRAARGS more arguments (-benchshot N, -mixtest, -c2ptest, -cacr X)
+#   EXTRAARGS more arguments (-benchshot N, -mixtest, -c2ptest, -cacr X,
+#            -benchtics N)
+#   RAWARGS  the whole command line instead (fuzz.sh)
+#   SIZE     the view size (screenblocks, default 10)
+#   PACE     play: the tic clock's speed in percent (190: Hatari's TT runs
+#            TTDOOM about 1.9 times as fast as a real one)
 #   TAG      a suffix for the run's folder, to tell parallel runs apart
 #   HATARI   the emulator (default: hatari on the PATH, else the Mac app)
 #   BENCH    the work folder (default tmp/bench)
@@ -48,13 +55,15 @@ case $MODE in
   *nodraw)  ARGS="$ARGS -nodraw -nosound" ;;
   *nosfx)   ARGS="$ARGS -nosfx" ;;
   *nosound) ARGS="$ARGS -nosound" ;;
+  *play)    ARGS="-playdemo ${DEMO:-demo1} -benchpace ${PACE:-190}" ;;
 esac
 [ -n "${EXTRAARGS:-}" ] && ARGS="$ARGS $EXTRAARGS"
+[ -n "${RAWARGS:-}" ] && ARGS=$RAWARGS
 # STDOOM keeps its own default view size
 if [ "$MACHINE" = ste ]; then
   printf 'detaillevel %s\n' "$DETAIL" > "$R/hd/doomrc.cfg"
 else
-  printf 'screenblocks 10\ndetaillevel %s\n' "$DETAIL" > "$R/hd/doomrc.cfg"
+  printf 'screenblocks %s\ndetaillevel %s\n' "${SIZE:-10}" "$DETAIL" > "$R/hd/doomrc.cfg"
 fi
 printf '%s\n' "$ARGS" > "$R/hd/ARGS.TXT"
 : > "$R/hatari.cfg"
@@ -75,7 +84,7 @@ HPID=$!
 for i in $(seq 1 50); do [ -p "$FIFO" ] && break; sleep 0.2; done
 waitfor() {
   for i in $(seq 1 ${2:-2400}); do
-    grep -q "$1" "$LOG" && return 0
+    grep -aEq "$1" "$LOG" && return 0
     kill -0 $HPID 2>/dev/null || return 1
     sleep 0.5
   done
@@ -89,19 +98,33 @@ if [ -n "$PROF" ]; then
   printf 'profile on\n' > "$R/profon.ini"
   waitfor "BENCH READY" || echo "no BENCH READY" >&2
   echo "hatari-debug symbols prg" > "$FIFO"
-  echo "hatari-debug b pc = _G_ReadDemoTiccmd :once :quiet :file $R/profon.ini" > "$FIFO"
-  echo "hatari-debug b pc = _I_Error :quiet :file $R/prof.ini" > "$FIFO"
+  # a.out C symbols have a leading underscore, ELF ones (gcc 13) none
+  U=_; grep -q " _I_Error$" "$BENCH/nm_$LABEL.txt" || U=
+  echo "hatari-debug b pc = ${U}G_ReadDemoTiccmd :once :quiet :file $R/profon.ini" > "$FIFO"
+  echo "hatari-debug b pc = ${U}I_Error :quiet :file $R/prof.ini" > "$FIFO"
   # prof.ini quits Hatari once the profile is out
   for i in $(seq 1 4800); do kill -0 $HPID 2>/dev/null || break; sleep 0.5; done
 else
-  waitfor "timed .* gametics" || echo "$LABEL $MODE: no result" >&2
+  waitfor "gametics in [0-9]+ realtics|fuzzed [0-9]+ tics" || echo "$LABEL $MODE: no result" >&2
   echo "hatari-debug quit" > "$FIFO" 2>/dev/null
 fi
 for i in $(seq 1 20); do kill -0 $HPID 2>/dev/null || break; sleep 0.5; done
 kill -9 $HPID 2>/dev/null
-N=$(grep -o "timed [0-9]* gametics in [0-9]* realtics" "$LOG" | head -1 | awk '{print $5}')
-ST=$(grep -o "BENCH STATE.*" "$LOG" | head -1 | sed 's/BENCH STATE //')
-if [ -n "$N" ]; then
+N=$(grep -ao "timed [0-9]* gametics in [0-9]* realtics" "$LOG" | head -1 | awk '{print $5}')
+ST=$(grep -ao "BENCH STATE.*" "$LOG" | head -1 | sed 's/BENCH STATE //' | tr -d '\r')
+RC=$(grep -ao "RCHECK frames.*" "$LOG" | head -1 | tr -d '\r')
+[ -n "$RC" ] && ST="$ST  $RC"
+grep -a "RCHECK first" "$LOG" | tr -d '\r' >&2
+PL=$(grep -ao "played [0-9]* gametics in [0-9]* realtics, [0-9]* frames" "$LOG" | head -1)
+FZ=$(grep -ao "fuzzed [0-9]* tics" "$LOG" | head -1)
+if [ -n "$PL" ]; then
+  # Real play at the TT's pace: frames a second of TT time, and how fast
+  # the game ran (TryRunTics runs at most 5 tics a frame)
+  echo "$PL" | awk -v l="$MACHINE-$LABEL" -v m="$MODE${DEMO:+-$DEMO}${TAG:+-$TAG}" -v st="$ST" \
+    '{ printf "%-16s %-16s %4d frames %5d tics %5.2f fps %5.1f%% speed  %s\n", l, m, $7, $5, $7*35/$5, $2*100/$5, st }'
+elif [ -n "$FZ" ]; then
+  echo "$MACHINE-$LABEL $MODE${TAG:+-$TAG}: $FZ, $(grep -ac '^FUZZ ' "$LOG") hashes, last $(grep -a '^FUZZ ' "$LOG" | tail -1 | tr -d '\r')${RC:+  $RC}"
+elif [ -n "$N" ]; then
   awk -v n="$N" -v l="$MACHINE-$LABEL" -v m="$MODE${DEMO:+-$DEMO}${TAG:+-$TAG}" -v st="$ST" \
     'BEGIN { printf "%-16s %-16s %6d realtics %7.1f ms/frame  %s\n", l, m, n, n*1000/35/600, st }'
 elif [ -n "$PROF" ]; then

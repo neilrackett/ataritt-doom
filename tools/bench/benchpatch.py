@@ -19,6 +19,14 @@
 #   under Hatari and real time on a TT.
 # - -benchzone KB: a zone no bigger than that, as on a machine with less
 #   free memory.
+# - -benchtics N: a demo ends at tic N (default 600).
+# - -playdemo NAME (real play: as many tics a frame as TryRunTics runs)
+#   ends there too, with "played N gametics in R realtics, F frames".
+#   -benchpace PCT runs the tic clock PCT% as fast: at 190, Hatari's TT has
+#   a real TT's balance of tics to frames.
+# - -benchfuzz SEED: ticcmds from a private generator, one tic a loop, god
+#   mode, on whatever -warp names; a FUZZ line every 35 tics hashes the
+#   game state in depth, and the run ends after -benchtics tics (fuzz.sh).
 # - -noblit (TTDOOM): no C2P and no page flip (id parsed it "for
 #   comparative timing purposes" and never used it): a run without it, less
 #   one with it, is what the C2P costs.
@@ -33,7 +41,15 @@ import sys, re, pathlib
 root = pathlib.Path(sys.argv[1])
 p = root / "src/i_main.c"
 s = p.read_text()
-s = s.replace("#include \"m_argv.h\"", "#include \"m_argv.h\"\n#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>", 1)
+s = s.replace("#include \"m_argv.h\"", """#include "m_argv.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+int bench_tics = 600;		// -benchtics N: where a demo or fuzz run ends
+int bench_pace = 100;		// -benchpace PCT: the tic clock's speed
+unsigned long bench_fuzz;	// -benchfuzz SEED: generated ticcmds
+int bench_frames, bench_t0;	// frames drawn and the time since BENCH START
+""", 1)
 s = s.replace("""    myargc = argc; 
     myargv = argv; """, """    static char bench_buf[256];
     static char *bench_argv[32];
@@ -70,6 +86,22 @@ s = s.replace("""    myargc = argc;
 		    stderr = stdout;
 		break;
 	    }
+	for (k = 1; k < argc - 1; k++)
+	    if (!strcmp (argv[k], "-benchtics"))
+		bench_tics = atoi (argv[k + 1]);
+	    else if (!strcmp (argv[k], "-benchpace"))
+		bench_pace = atoi (argv[k + 1]);
+	    else if (!strcmp (argv[k], "-benchfuzz"))
+	    {
+		// one tic a loop, as a timedemo runs
+		extern boolean singletics, nodrawers;
+		int j;
+		bench_fuzz = strtoul (argv[k + 1], NULL, 10) | 1;
+		singletics = true;
+		for (j = 1; j < argc; j++)
+		    if (!strcmp (argv[j], "-nodraw"))
+			nodrawers = true;
+	    }
     }
     fprintf (stderr, "BENCH READY\\n");
     fflush (stderr);
@@ -83,10 +115,13 @@ old = "    if (*demo_p == DEMOMARKER) "
 assert old in s
 s = s.replace(old, """    if (gametic == 1)
     {
+	extern int bench_frames, bench_t0;
 	fprintf (stderr, "BENCH START\\n");
 	fflush (stderr);
+	bench_frames = 0;
+	bench_t0 = I_GetTime ();
     }
-    if (*demo_p == DEMOMARKER || gametic >= 600)
+    if (*demo_p == DEMOMARKER || gametic >= bench_tics)
     {
 	// Game state at the demo's end: every mobj's position, motion,
 	// angle, health and state, and the random index. Builds whose game
@@ -116,7 +151,9 @@ s = s.replace(old, """    if (gametic == 1)
 		 gametic, n, prndindex, h);
 	fflush (stderr);
     }
-    if (*demo_p == DEMOMARKER || gametic >= 600) """, 1)
+    if (*demo_p == DEMOMARKER || gametic >= bench_tics) """, 1)
+s = s.replace("void G_ReadDemoTiccmd (ticcmd_t* cmd) \n{", "extern int bench_tics;\nvoid G_ReadDemoTiccmd (ticcmd_t* cmd) \n{", 1)
+assert "extern int bench_tics;\nvoid G_ReadDemoTiccmd" in s
 p.write_text(s)
 
 p = root / "src/i_video.c"
@@ -388,6 +425,272 @@ s = s.replace(old, old + """	{
 	    fprintf (stderr, "BENCH READS %d lumps, %d bytes\\n",
 		     bench_reads, bench_readbytes);
 	}
+	if (!timingdemo)
+	{
+	    // -playdemo: real play, as many tics a frame as TryRunTics runs
+	    extern int bench_frames, bench_t0;
+	    I_Error ("played %i gametics in %i realtics, %i frames",
+		     gametic, I_GetTime () - bench_t0, bench_frames);
+	}
 """, 1)
+
+# -benchfuzz SEED: ticcmds from a private generator instead of the keyboard,
+# one tic a loop (main sets singletics), god mode and the shareware weapons,
+# so every build plays the same game on any map: FUZZ lines give a hash of
+# the game state every 35 tics, far more of it than BENCH STATE's.
+old = "void G_BuildTiccmd (ticcmd_t* cmd) \n{"
+assert s.count(old) == 1
+s = s.replace(old, """#include "p_local.h"
+#include "r_state.h"
+extern unsigned long bench_fuzz;
+static unsigned long bench_fz;
+static int bench_fztic;
+
+static unsigned bench_rnd (void)
+{
+    bench_fz = bench_fz * 1103515245u + 12345u;
+    return (bench_fz >> 16) & 0x7fff;
+}
+
+static unsigned long bench_deephash (void)
+{
+    extern int prndindex;
+    player_t *p = &players[consoleplayer];
+    thinker_t *th;
+    unsigned long h = 2166136261u;
+    int i;
+#define BH(v) h = (h ^ (unsigned long)(v)) * 16777619u
+    for (th = thinkercap.next; th != &thinkercap; th = th->next)
+    {
+	mobj_t *mo;
+	if (th->function.acp1 != (actionf_p1)P_MobjThinker)
+	{
+	    BH (0x5a5a);
+	    continue;
+	}
+	mo = (mobj_t *)th;
+	BH (mo->x); BH (mo->y); BH (mo->z);
+	BH (mo->momx); BH (mo->momy); BH (mo->momz);
+	BH (mo->angle); BH (mo->health); BH (mo->state - states);
+	BH (mo->tics); BH (mo->flags); BH (mo->floorz); BH (mo->ceilingz);
+	BH (mo->movedir); BH (mo->movecount); BH (mo->reactiontime);
+	BH (mo->threshold); BH (mo->type); BH (mo->radius); BH (mo->height);
+	BH (mo->target ? mo->target->x ^ mo->target->type : -1);
+	BH (mo->subsector - subsectors);
+    }
+    for (i = 0; i < numsectors; i++)
+    {
+	BH (sectors[i].floorheight); BH (sectors[i].ceilingheight);
+	BH (sectors[i].lightlevel); BH (sectors[i].special);
+	BH (sectors[i].floorpic); BH (sectors[i].ceilingpic);
+	BH (sectors[i].soundtarget ? sectors[i].soundtarget->x : -1);
+    }
+    for (i = 0; i < numlines; i++)
+	BH (lines[i].special);
+    BH (p->health); BH (p->armorpoints); BH (p->readyweapon);
+    BH (p->pendingweapon); BH (p->killcount); BH (p->itemcount);
+    BH (p->secretcount); BH (p->damagecount); BH (p->bonuscount);
+    BH (p->viewz); BH (p->playerstate); BH (p->refire);
+    for (i = 0; i < NUMAMMO; i++)
+	BH (p->ammo[i]);
+    BH (prndindex); BH (leveltime); BH (gamemap);
+#undef BH
+    return h;
+}
+
+static void bench_fuzzcmd (ticcmd_t* cmd)
+{
+    static const signed char fwds[8] = { 50, 50, 50, 50, 25, 25, 0, -25 };
+    static const signed char sides[8] = { 0, 0, 0, 0, 40, -40, 24, -24 };
+    static const short turns[8] = { 0, 0, 0, 320, -320, 1280, -1280, 640 };
+    static const char weapons[6] = { wp_fist, wp_pistol, wp_shotgun,
+				     wp_chaingun, wp_missile, wp_chainsaw };
+    static int hold, fwd, side, turn, attack;
+    extern int bench_tics;
+    player_t *p = &players[consoleplayer];
+    int i, once = 0;
+
+    if (!bench_fztic)
+	bench_fz = bench_fuzz;
+    if (gamestate == GS_LEVEL && p->mo)
+    {
+	// the shareware weapons only: its WAD has no plasma or BFG sprites
+	p->cheats |= CF_GODMODE;
+	for (i = 0; i < 6; i++)
+	    p->weaponowned[(int)weapons[i]] = true;
+	p->ammo[am_clip] = p->maxammo[am_clip];
+	p->ammo[am_shell] = p->maxammo[am_shell];
+	p->ammo[am_misl] = p->maxammo[am_misl];
+    }
+    if (hold-- <= 0)
+    {
+	unsigned r = bench_rnd ();
+	hold = 5 + bench_rnd () % 30;
+	fwd = fwds[r & 7];
+	side = sides[(r >> 3) & 7];
+	turn = turns[(r >> 6) & 7];
+	attack = ((r >> 9) & 7) < 3;
+	// for this tic only: use (a new press each time) or a weapon
+	if ((r >> 12) & 1)
+	    once = BT_USE;
+	else if (((r >> 13) & 3) == 0)
+	    once = BT_CHANGE
+		| (weapons[bench_rnd () % 6] << BT_WEAPONSHIFT);
+    }
+    cmd->forwardmove = fwd;
+    cmd->sidemove = side;
+    cmd->angleturn = turn;
+    cmd->buttons = (attack ? BT_ATTACK : 0) | once;
+
+    bench_fztic++;
+    if (gamestate == GS_LEVEL && !(bench_fztic % 35))
+	fprintf (stderr, "FUZZ %d map %d hash %08lx\\n", bench_fztic,
+		 gamemap, bench_deephash ());
+    if (bench_fztic >= bench_tics)
+    {
+	fflush (stderr);
+	I_Error ("fuzzed %i tics", bench_fztic);
+    }
+}
+
+""" + old, 1)
+import re
+m = re.search(r"    cmd->consistancy = *\n\s*consistancy\[consoleplayer\]\[maketic%BACKUPTICS\]; *\n", s)
+assert m
+s = s[:m.end()] + "    if (bench_fuzz)\n    {\n\tbench_fuzzcmd (cmd);\n\treturn;\n    }\n" + s[m.end():]
+p.write_text(s)
+
+# No NetUpdate in a fuzz run: called from the renderer it would build
+# ticcmds whenever the clock moved, and the generator must run once a tic
+p = root / "src/d_net.c"
+s = p.read_text()
+old = "    // check time\n    nowtime = I_GetTime ()/ticdup;"
+assert old in s
+s = s.replace(old, "    { extern unsigned long bench_fuzz; if (bench_fuzz) return; }\n" + old, 1)
+p.write_text(s)
+
+# Frames drawn, for -playdemo's result
+p = root / "src/i_video.c"
+s = p.read_text()
+old = "void I_FinishUpdate (void)\n{\n"
+assert old in s
+s = s.replace(old, old + "    { extern int bench_frames; bench_frames++; }\n", 1)
+p.write_text(s)
+
+# -benchpace PCT: the tic clock PCT% as fast. Hatari's TT runs TTDOOM about
+# 1.9 times as fast as a real one, so at 190 a -playdemo run has the real
+# TT's balance of tics to frames (and its slow motion below 7 fps).
+p = root / "src/i_system.c"
+s = p.read_text()
+old = "    return (t-basetime)*TICRATE/200;"
+assert old in s
+s = s.replace(old, """    {
+	extern int bench_pace;
+	if (bench_pace != 100)
+	    return (t-basetime)*(unsigned long)(TICRATE*bench_pace)/20000;
+    }
+""" + old, 1)
+p.write_text(s)
+
+# -rcheck: every 3D view drawn twice, by the old code and the new, and
+# compared. While a renderer change is being made its old code stays in
+# the source under R_CHECK, chosen by r_oldpath; RCHECK=1 (the environment
+# of mkbuild.sh) defines R_CHECK. Frames differ between builds by a few
+# layout-dependent reads, so only one binary can compare exactly. Without
+# R_CHECK the two passes are the same code: zero differences, which checks
+# the check.
+import os
+if os.environ.get("RCHECK"):
+    p = root / "src/doomdef.h"
+    s = p.read_text()
+    old = "#ifndef __DOOMDEF__\n#define __DOOMDEF__\n"
+    assert old in s
+    s = s.replace(old, old + "#define R_CHECK 1\n", 1)
+    p.write_text(s)
+p = root / "src/r_main.c"
+s = p.read_text()
+old = "void R_RenderPlayerView (player_t* player)\n{"
+assert s.count(old) == 1
+s = s.replace(old, "static void R_RenderPlayerView1 (player_t* player)\n{", 1)
+s += """
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "m_argv.h"
+#include "v_video.h"
+int r_oldpath;
+static int rcheck_on = -1, rcheck_frames, rcheck_badframes, rcheck_firsttic = -1;
+static long rcheck_pixels;
+
+void R_RenderPlayerView (player_t* player)
+{
+    static byte *save;
+    extern short fuzzpos;
+    extern int gametic;
+    int fuzz, i, bad = 0;
+
+    if (rcheck_on < 0)
+	rcheck_on = M_CheckParm ("-rcheck") != 0;
+    if (!rcheck_on)
+    {
+	R_RenderPlayerView1 (player);
+	return;
+    }
+    if (!save)
+	save = malloc (SCREENWIDTH*SCREENHEIGHT);
+    fuzz = fuzzpos;
+    r_oldpath = 1;
+    R_RenderPlayerView1 (player);
+    memcpy (save, screens[0], SCREENWIDTH*SCREENHEIGHT);
+    fuzzpos = fuzz;
+    r_oldpath = 0;
+    R_RenderPlayerView1 (player);
+    for (i = 0; i < SCREENWIDTH*SCREENHEIGHT; i++)
+	if (save[i] != screens[0][i])
+	    bad++;
+    rcheck_frames++;
+    if (bad)
+    {
+	if (rcheck_firsttic < 0)
+	{
+	    rcheck_firsttic = gametic;
+	    for (i = 0; save[i] == screens[0][i]; i++)
+		;
+	    fprintf (stderr, "RCHECK first difference: tic %d, x %d y %d, %d pixels\\n",
+		     gametic, i % SCREENWIDTH, i / SCREENWIDTH, bad);
+	}
+	rcheck_badframes++;
+	rcheck_pixels += bad;
+    }
+}
+
+void bench_rcheck_report (void)
+{
+    if (rcheck_on > 0)
+	fprintf (stderr, "RCHECK frames %d, %d differ, %ld pixels\\n",
+		 rcheck_frames, rcheck_badframes, rcheck_pixels);
+}
+"""
+p.write_text(s)
+p = root / "src/g_game.c"
+s = p.read_text()
+old = """	if (!timingdemo)
+	{
+	    // -playdemo: real play, as many tics a frame as TryRunTics runs"""
+assert old in s
+s = s.replace(old, """	{
+	    extern void bench_rcheck_report (void);
+	    bench_rcheck_report ();
+	}
+""" + old, 1)
+old = """    if (bench_fztic >= bench_tics)
+    {
+	fflush (stderr);"""
+assert old in s
+s = s.replace(old, """    if (bench_fztic >= bench_tics)
+    {
+	extern void bench_rcheck_report (void);
+	bench_rcheck_report ();
+	fflush (stderr);""", 1)
 p.write_text(s)
 print("patched", root)
