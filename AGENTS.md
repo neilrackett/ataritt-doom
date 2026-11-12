@@ -938,10 +938,19 @@ The first round, BENCH.TOS in TT-RAM, so the zone was 1.83 MB:
   insertion sort; `R_MakeSpans` with trip counts worked out up front
   (ADoom); `R_PointToAngle` as octant selection plus one `SlopeDiv`; the
   wall tiers' column fetch (`R_RenderSegLoop`, 4.5 ms, a table chain a
-  tier); `R_MapStagedSpans` in asm; span stores four pixels to a
-  `move.l` and columns unrolled x4 (ADoom's `R_DrawSpan_040` and
-  `R_DrawColumn_040`: packing by `move.w`/`move.b`/`swap` leaves X
-  alone, and ending the loop on an address compare frees its counter).
+  tier); `R_MapStagedSpans` in asm. Each is under 1 ms of a 91 ms frame
+  now: what is left of the frame is the C2P (22 ms), the drawers' inner
+  loops (25) and thirty-odd ms spread over a dozen functions.
+- **ADoom's drawer loops: built, pixel-exact, and no faster under
+  Hatari.** High-detail spans stored four pixels to a `move.l`
+  (`R_DrawSpan_040`: packed by `move.w`/`move.b`/`swap`, which leave X
+  to the `addx` chain, the loops ending on address compares to free the
+  counter's register): 23.0 -> 23.2 ms, 8 instructions a pixel for 7.5.
+  Columns four pixels a loop with a computed entry (`R_DrawColumn_040`):
+  133.1 -> 132.1 ms in high detail, nothing in low. Hatari charges a
+  bus write little; a real TT may charge more, so the span loop is the
+  one worth a real-TT run if one is ever made (`rcheck` passed for
+  both).
 - **Game logic, what's left:** the thinker loop (1.2 ms a tic: it reads
   six cache lines a thing; `mobj_t` reordered would read three, but
   savegames store the struct raw, so they would have to be written
@@ -954,10 +963,14 @@ The first round, BENCH.TOS in TT-RAM, so the zone was 1.83 MB:
   `FixedMul` through a pointer), its game logic id's, its FPU fixed point
   for the 68060 only, and its compare-buffer C2P costs 13 ms a frame on
   a 25 MHz 68030 before it saves anything.
-- **Hot static data on 16 bytes whatever the load address.** The program
-  loads where GEMDOS puts it, and 2 bytes off a long costs 2.6% on a TT.
-  Find which static arrays matter (Hatari profiles of a `+2` run against
-  an aligned one) and move them into an aligned allocation.
+- **Load alignment: not the record buffers.** The program loads where
+  GEMDOS puts it, and 2 bytes off a long costs 2.6% on a TT (1.4% under
+  Hatari with gcc 13 + LTO). Moving the renderer's record buffers
+  (`segcols`, `segtiers`, `planespans`, `planerows`, `maskedcols`) into
+  aligned allocations changed nothing (1.4% -> 1.7%): the cost is spread
+  over every static long and the stack. Only loading the program aligned
+  cures it, as `BENCH.TOS` does for a benchmark (a pad block before
+  `Pexec`): a launcher could do the same for players.
 - **Spread the zoomed views' stores.** `C2P8_MERGE_FN` (sizes 3-5) still
   stores 2, 4 or 8 copies of each group in one burst. With more stores than
   merges, measure whether spreading still pays.
@@ -974,8 +987,8 @@ The first round, BENCH.TOS in TT-RAM, so the zone was 1.83 MB:
   instructions) and cost columns nothing (`columnofs`), but spans,
   patches, wipes, the automap and screenshots would all need the order,
   and a span loop absorbing it doesn't fit the instruction cache.
-- **The toolchain, what's left** (gcc 13, LTO and PGO: see above; PGO for
-  the release has its own item): value profiling (needs thread-local
+- **The toolchain, what's left** (gcc 13, LTO and PGO: see above):
+  value profiling (needs thread-local
   storage in a TOS program); tuning flags for gcc 13; vasm modules for the
   drawers and C2P.
 - **`-mfastcall`: measured, not adopted.** Vincent Rivière's gcc 4.6.4 and
