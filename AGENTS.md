@@ -614,15 +614,64 @@ Anything that reads or publishes Xpad: read
   bus cycles. `I_AllocAligned` puts the zone and `screens` on 16 bytes, but
   the program itself loads wherever the free memory starts: 2 bytes off,
   demo3 low ran 4.4% slower (gcc 4.6.4) or 1.4% (LTO + PGO) under Hatari,
-  and 8.1% or 2.6% on a real TT. Compare timings only at the same load
+  and 8.1% or 2.6% on a real TT. (4, 8 and 12 bytes off a 16-byte boundary
+  time the same as on one.) Compare timings only at the same load
   alignment: the start-up line prints where the zone and the program are.
-
+- **TTDOOM moves itself up 2 bytes when it is 2 bytes off**
+  (`atari_align.c`, all asm). The program's entry is `atari_align_entry`
+  (the link's `-e`), ahead of MiNTLib's `_start`: on a long it jumps
+  straight there. Off one, on a 68020 or 68030, it reads the relocation
+  table again from its file (`TTDOOM.TOS` or `.TTP` in the current
+  folder, the header's sizes its own; 16K, into the free memory above the
+  BSS), adds 2 to every relocated address that points past itself, moves
+  the rest of the text and the data up 2 bytes and tells the basepage
+  (the text 2 longer, data and BSS 2 on). No file, another CPU, or
+  `-noalign`: it runs where it is. 80 ms under Hatari. (An earlier
+  version loaded the whole program again with `Pexec`: 650K more to
+  read, and three `Pexec` modes to trust through a hard disk driver.)
+  Do not regress:
+  - Only that code stays put, and it must be the first thing in the
+    text, ahead of `crt0.o`. Code calls code relative to the PC (MiNTLib's
+    `exit` reaches `crt0.o`'s `_mcleanup` with a `bsr.l`), so anything
+    left in front of the gap with it is called 2 bytes out: with
+    `crt0.o` there the program ran and then crashed on exit. The driver
+    links its start files first, so a specs file puts the object at
+    their head (`ALIGN_SPECS`), and gcc 13's linker script puts the text
+    of files named `*crt0.o` first: the object is `atari_align-crt0.o`.
+    The link fails if `atari_align_front` isn't the text's first symbol
+    (`ALIGN_FRONT_CHECK`). The code's only relocated address is its `jmp`
+    to `_start`.
+  - It must run before anything that moves has run (the instruction
+    cache) or taken an address.
+  - The stack is a separate matter: MiNTLib puts it a multiple of 4
+    above the basepage, which doesn't move. `main` is `atari_align.c`'s
+    (in the object that moves), which takes 2 off a stack that is 2 off
+    and calls the game's, `atari_main` (`i_main.c`). The stack is half
+    of the cost: demo3 low, gcc 13 + LTO + PGO, 1833 realtics 2 bytes
+    off, 1820 with the stack on a long, 1801 moved, 1799-1807 loaded on
+    a long (gcc 4.6.4: 1909, 1877, 1857, 1852).
+  - Under Hatari: TOS 3.06 starts an autostarted `TTDOOM.TOS` at
+    `$01007B2E`, 2 bytes off, so the release moves there, and the
+    start-up line says `program at 01007b30, moved up`. Checked on a TT
+    with and without TT-RAM, from `.TOS` and `.TTP`, 2 and 6 bytes off,
+    quitting back to the desktop, demos 1-3's hashes, all 27 fuzz
+    streams, `-mixtest` and `-c2ptest`. TOS 4.04 and EmuTOS keep blocks
+    on longs: on a Falcon it never runs. Not run on a real TT.
+  - Hatari's debugger won't load a moved program's symbols (the text's
+    size no longer the file's). Benchmark builds look for `TTALIGN.TOS`
+    instead (`benchpatch.py`), so `run.sh` and `BENCH.TOS` runs stay
+    where they were loaded: every `run.sh` figure here is for a program
+    2 bytes off (those from before 2026-11-13 with its stack 2 off as
+    well, about 1% slower), every `runkit.sh` or TT kit figure for one
+    on a long unless `+2`. `ALIGN=1` (`run.sh`, `fuzz.sh`) or
+    `ALIGN=LABEL` (`runkit.sh`) adds that file, to test the move.
 - **The quit messages' table had two commas missing** (`dstrings.c`,
   id's own): two pairs of messages ran together, a line of 51 or 47
   characters into `M_DrawMenuLayer`'s `string[40]`, over its return
   address, and the last of the 20 was a NULL. Three quits in twenty
   crashed in the menu (English), before `I_Quit` saved the config or
   gave the VBL back. A message line must stay under 40 characters.
+
 - **Lines' `validcount` is `linevalid[]`**, shared by the sight checks
   and `P_BlockLinesIterator`, as the field in `line_t` was: a sight check
   inside a blockmap walk (an action function run from a collision) bumps
@@ -975,8 +1024,8 @@ The first round, BENCH.TOS in TT-RAM, so the zone was 1.83 MB:
   (`segcols`, `segtiers`, `planespans`, `planerows`, `maskedcols`) into
   aligned allocations changed nothing (1.4% -> 1.7%): the cost is spread
   over every static long and the stack. Only loading the program aligned
-  cures it, as `BENCH.TOS` does for a benchmark (a pad block before
-  `Pexec`): a launcher could do the same for players.
+  cures it, or moving it once loaded, which TTDOOM now does
+  (`atari_align.c`, above).
 - **Spread the zoomed views' stores.** `C2P8_MERGE_FN` (sizes 3-5) still
   stores 2, 4 or 8 copies of each group in one burst. With more stores than
   merges, measure whether spreading still pays.

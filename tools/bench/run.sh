@@ -45,6 +45,9 @@ R=$BENCH/runs/${MACHINE}_${LABEL}_$MODE${DEMO:+_$DEMO}${TAG:+_$TAG}${PROF:+_prof
 rm -rf "$R"; mkdir -p "$R/hd"
 PROG=TTDOOM.TOS; [ "$MACHINE" = ste ] && PROG=STDOOM.TOS
 cp "$BENCH/bin/$LABEL.TOS" "$R/hd/$PROG"
+# ALIGN=1: the move onto a long (atari_align.c), which a benchmark build
+# only makes with this file there
+if [ -n "${ALIGN:-}" ]; then cp "$BENCH/bin/$LABEL.TOS" "$R/hd/TTALIGN.TOS"; fi
 cp "$REPO/dist/DOOM1.WAD" "$R/hd/"
 case $MODE in
   low*)  DETAIL=1 ;;

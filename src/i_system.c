@@ -183,7 +183,18 @@ byte* I_ZoneBase (int*	size)
     unsigned long addr = (unsigned long) I_AllocAligned (*size);
     if (!addr) {
         I_Error("Not enough memory available");
-    } else if (addr >= (1L<<24)) {
+    }
+#ifdef TTDOOM
+    else {
+        // Where the zone is, and the program once atari_align.c has moved it
+        extern long atari_align_moved;
+        printf("%s allocated at %08lx (program at %08lx%s)\n",
+               addr >= (1L<<24) ? "Fast RAM" : addr >= (1L<<22) ? "Alt-RAM" : "ST-RAM",
+               addr, (unsigned long) _base->p_tbase + atari_align_moved,
+               atari_align_moved ? ", moved up" : "");
+    }
+#else
+    else if (addr >= (1L<<24)) {
         printf("Fast RAM allocated at %08lx (program at %08lx)\n", addr,
                (unsigned long) _base->p_tbase);
     } else if (addr >= (1L<<22)) {
@@ -191,6 +202,7 @@ byte* I_ZoneBase (int*	size)
     } else {
         printf("ST-RAM allocated at %06lx\n", addr);
     }
+#endif
     return (byte*)addr;
 }
 

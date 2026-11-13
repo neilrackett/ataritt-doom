@@ -48,6 +48,9 @@ for prog in $(printf '%s\n' "$LINES" | grep -o '[A-Za-z0-9_]*\.TTP' | sort -u); 
   [ -f "$BENCH/bin/$label.TOS" ] || { echo "no $BENCH/bin/$label.TOS" >&2; exit 1; }
   cp "$BENCH/bin/$label.TOS" "$R/hd/$(printf '%s' "$prog" | tr a-z A-Z)"
 done
+# ALIGN=LABEL: that build as TTALIGN.TOS too, the file a benchmark build
+# needs to move itself when it starts 2 bytes off a long (atari_align.c)
+if [ -n "${ALIGN:-}" ]; then cp "$BENCH/bin/$ALIGN.TOS" "$R/hd/TTALIGN.TOS"; fi
 printf '%s\n' "$LINES" | crlf "$R/hd/BENCH.TXT"
 
 : > "$R/hatari.cfg"

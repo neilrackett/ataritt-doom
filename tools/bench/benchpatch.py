@@ -37,6 +37,11 @@
 #   channel states (MIXTEST, the number of mismatches).
 # - -c2ptest: c2p8_pairbox1/2 against c2p8_box1/2 on random paired rows
 #   (C2PTEST, the number of mismatches).
+# - The program moves itself onto a long (atari_align.c) only with
+#   TTALIGN.TOS there, not TTDOOM.TOS, the name run.sh gives it: a run
+#   keeps the alignment TOS or BENCH.TOS (+N) gave it, and Hatari's
+#   profiler its symbols. ALIGN=1 (run.sh) or ALIGN=LABEL (runkit.sh) puts
+#   a copy there under that name, to time or test the move.
 import sys, re, pathlib
 root = pathlib.Path(sys.argv[1])
 p = root / "src/i_main.c"
@@ -693,4 +698,14 @@ s = s.replace(old, """    if (bench_fztic >= bench_tics)
 	bench_rcheck_report ();
 	fflush (stderr);""", 1)
 p.write_text(s)
+
+# The file the move reads: TTALIGN.TOS (see above)
+p = root / "src/atari_align.c"
+if p.exists():
+    s = p.read_text()
+    for ext in "TOS", "TTP":
+        old = '.asciz\t\\"TTDOOM.%s\\"' % ext
+        assert old in s
+        s = s.replace(old, '.asciz\t\\"TTALIGN.%s\\"' % ext, 1)
+    p.write_text(s)
 print("patched", root)

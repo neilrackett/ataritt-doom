@@ -204,15 +204,19 @@ OBJS=				\
 # TTDOOM: no SidecarTridge accelerator (ST Low only), plus the TT / Falcon
 # video mode code.
 SIDECART_OBJS=$(OBJDIR)/sidecart_c2p.o $(OBJDIR)/sidecart_md.o $(OBJDIR)/sidecart_stubs.o
-OBJSTT=$(patsubst %.o,%.tt.o,$(filter-out $(SIDECART_OBJS),$(OBJS))) $(OBJDIR)/atari_vmode.tt.o
+OBJSTT=$(OBJDIR)/atari_align.tt.o $(patsubst %.o,%.tt.o,$(filter-out $(SIDECART_OBJS),$(OBJS))) $(OBJDIR)/atari_vmode.tt.o
+# atari_align.c's code that stays put when the program moves onto a long:
+# linked first (ALIGN_ENTRY)
+ALIGN_STUB=$(OBJDIR)/atari_align-crt0.o
 # PGO=gen: pgo.c writes the profile when a benchmark's demo ends
 ifeq ($(PGO),gen)
 OBJSTT+=$(OBJDIR)/pgo.tt.o
 endif
 # The box C2P's loops and the sight check's traversal are top-level asm,
 # which an LTO object only holds as gcc's intermediate code until the link:
-# compiled without LTO, so CACHE_CHECK can measure them in the object
-$(OBJDIR)/atari_c2p.tt.o $(OBJDIR)/p_sight.tt.o: OPTFLAGS:=$(filter-out -flto%,$(OPTFLAGS))
+# compiled without LTO, so CACHE_CHECK can measure them in the object.
+# atari_align.c is all top-level asm.
+$(OBJDIR)/atari_c2p.tt.o $(OBJDIR)/p_sight.tt.o $(OBJDIR)/atari_align.tt.o $(ALIGN_STUB): OPTFLAGS:=$(filter-out -flto%,$(OPTFLAGS))
 
 ifeq ($(PGO),use)
 ifneq ($(PROFILE),)
@@ -249,10 +253,33 @@ CACHE_CHECK = $(NM) -t d $(1) | awk \
 	   if (s > $(2)) { print "*** " n ": " s " bytes, over $(2)"; bad = 1 } } \
 	 END { exit bad }'
 
-$(DISTDIR)/$(TARGETTT):	$(OBJSTT) | $(DISTDIR)
+# A TTDOOM that TOS loaded 2 bytes off a long moves itself up 2 bytes
+# (atari_align.c): the program starts at atari_align_entry, not the C
+# library's _start, and everything moves but that code, which so has to be
+# the first thing in the text, ahead of the C library's crt0.o. The
+# compiler's driver links its start files before anything it is given, so
+# a specs file puts the object at the head of them; and gcc 13's linker
+# script puts the text of files named *crt0.o first, in the link's order:
+# hence the object's name. The link is checked: atari_align_front must be
+# the text's first symbol.
+ALIGN_SPECS = $(OBJDIR)/atari_align.specs
+ALIGN_ENTRY = -specs=$(ALIGN_SPECS) -Wl,-e,atari_align_entry
+ALIGN_FRONT_CHECK = $(NM) -n -t d $(1) | awk \
+	'$$2 ~ /^[Tt]$$/ && !n++ { a = $$1 } \
+	 /atari_align_front$$/ { k = $$1 - a; f = 1 } \
+	 END { if (!f || k) { print "*** atari_align_front is " k " bytes into the text: it must be first"; exit 1 } }'
+
+$(DISTDIR)/$(TARGETTT):	$(OBJSTT) $(ALIGN_STUB) $(ALIGN_SPECS) | $(DISTDIR)
 	@$(call CACHE_CHECK,$(OBJDIR)/atari_c2p.tt.o,240)
 	@$(call CACHE_CHECK,$(OBJDIR)/p_sight.tt.o,288)
-	$(CC) $(CFLAGSTT) $(OBJSTT) -o $@ $(LDLIBSTT)
+	$(CC) $(CFLAGSTT) $(ALIGN_ENTRY) $(OBJSTT) -o $@ $(LDLIBSTT)
+	@$(call ALIGN_FRONT_CHECK,$@)
+
+$(ALIGN_STUB):	atari_align.c | $(OBJDIR)
+	$(CC) $(CPPFLAGS) $(CFLAGSTT) -DATARI_ALIGN_STUB -c $< -o $@
+
+$(ALIGN_SPECS):	| $(OBJDIR)
+	printf '%%rename startfile align_startfile\n\n*startfile:\n%s %%(align_startfile)\n\n' '$(ALIGN_STUB)' > $@
 
 $(OBJDIR)/%.tt.o:	%.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGSTT) -c $< -o $@

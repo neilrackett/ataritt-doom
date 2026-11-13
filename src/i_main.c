@@ -39,6 +39,12 @@ rcsid[] = "$Id: i_main.c,v 1.4 1997/02/03 22:45:10 b1 Exp $";
 // Set by a profiling build (pgo.h)
 void (*pgo_args_hook) (int *argc, char ***argv);
 
+#ifdef TTDOOM
+// The C library's main is atari_align.c's, which puts the stack on a long
+// and calls this
+#define main atari_main
+#endif
+
 int
 main
 ( int		argc,
