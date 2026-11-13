@@ -617,6 +617,12 @@ Anything that reads or publishes Xpad: read
   and 8.1% or 2.6% on a real TT. Compare timings only at the same load
   alignment: the start-up line prints where the zone and the program are.
 
+- **The quit messages' table had two commas missing** (`dstrings.c`,
+  id's own): two pairs of messages ran together, a line of 51 or 47
+  characters into `M_DrawMenuLayer`'s `string[40]`, over its return
+  address, and the last of the 20 was a NULL. Three quits in twenty
+  crashed in the menu (English), before `I_Quit` saved the config or
+  gave the VBL back. A message line must stay under 40 characters.
 - **Lines' `validcount` is `linevalid[]`**, shared by the sight checks
   and `P_BlockLinesIterator`, as the field in `line_t` was: a sight check
   inside a blockmap walk (an action function run from a collision) bumps
