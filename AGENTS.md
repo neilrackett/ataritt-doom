@@ -35,7 +35,7 @@ Build targets:
 | 2   | **C2P offload** — ST uploads chunky framebuffer; RP2040 converts to planar and writes to shared ROM-in-RAM slot; ST blits from there | **Complete**                |
 | 3   | **Full C2P replacement** — route *all* rendering (splash, menus, intermission, automap, status bar, gameplay) through the accelerator when present, with dirty-rect support (status-bar cells, zoomed view); refactor into a separate `sidecart_c2p.c` | **Complete**                |
 | 4   | **Palette + dither modes** — `SET_MAP` replaced by `SET_PALETTE` (raw 768-byte RGB); RP2040 owns all colour reduction and returns chosen 16 ST colours; selectable modes: nearest-colour, greyscale, 2×2/4×4 Bayer; median-cut + k-means palette generation; palette selection quality needs future refinement | **Complete**                |
-| 5   | **Async data processing** — non-blocking C2P dispatch; ST returns to game logic immediately after firing C2P and synchronises only at vsync before the planar copy | **Abandoned** (upload-bound, ~1.2fps; saved on `turbo-async`) |
+| 5   | **Async data processing** — non-blocking C2P dispatch; ST returns to game logic immediately after firing C2P and synchronises only at vsync before the planar copy | **Abandoned** (upload-bound, ~1.2fps; code not kept) |
 | 6   | **Upload-optimisation investigation + new C2P modes** — standalone `UPTEST.TOS` upload benchmark, HW-confirmed: ~203ms/frame upload floor (≈4.9fps ceiling), RLE ~10× slower (68000 encode ~1.8s/frame), dirty-row a net loss ⇒ upload irreducible for gameplay; two new greyscale-dither modes (GREY 2×2/4×4 Bayer) + mode-switch key moved to keypad `*`; `-noturbo`→`-nosidecart` | **Complete** (HW-confirmed)  |
 | 7   | **Viewport scaling + palette/render expansion** — RP2040 nearest-neighbour upscales any shrunk gameplay view into the size-9 framed layout (even GRNROCK border, HUD message in the top border) at no extra upload cost, so smaller views run faster (the one lever that beats software); render axis (keypad `*`) = NEAREST/2×2/4×4 Bayer/HALFTONE; palette axis (keypad `/`) = SUBSET/GENERATED/EGA/C64/Spectrum/PICO-8/GREYSCALE (greyscale demoted from render mode to palette); `s_subset` re-synced to `atari_c2p.c`; boot banner shows on release builds | **Complete** (HW-confirmed)  |
 
@@ -206,10 +206,10 @@ Validate the dirty-rect pipeline in isolation with
 
 ## Milestone 5 — async dispatch (abandoned)
 
-Built and tested on hardware on the `turbo-async` branch (not merged). Firing
-the C2P and synchronising at vsync worked, but the accelerator is upload-bound,
-not conversion-bound, so hiding the conversion gave ~1.2 fps against ~4 fps in
-software.
+Built and tested on hardware, never merged, and the branch (`turbo-async`)
+has since been deleted. Firing the C2P and synchronising at vsync worked, but
+the accelerator is upload-bound, not conversion-bound, so hiding the
+conversion gave ~1.2 fps against ~4 fps in software.
 
 ## Milestone 6 — upload limits (measured on a Mega STE, 16 MHz + cache)
 
