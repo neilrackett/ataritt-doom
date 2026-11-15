@@ -1060,6 +1060,23 @@ The first round, BENCH.TOS in TT-RAM, so the zone was 1.83 MB:
   C2P box loops are `cdecl` under `__FASTCALL__` (their asm reads the
   stack; gcc's fastcall passes pointers in a0/a1 and integers in d0-d2).
   STDOOM would also need `sidecart_stubs.S` changed.
+- **A 68882 build (`-m68881`): measured, not adopted** (2026-11-15).
+  The game's only floating point was `m_fixed.c`'s `__HAVE_68881__` code
+  (upstream STDOOM's, since removed): `FixedMul` as a `long long`
+  product and `FixedDiv` as a `double` divide. Built that way (gcc 4.6.4, TT under
+  Hatari) it ran 25% slower: demo1 low 78.7 -> 96.5 ms, high 115.9 ->
+  140.2, demo3 low 89.9 -> 112.3, the game logic 6.1 -> 7.7 ms a tic.
+  `-m68881` turns off `FIXEDMUL_MULS64`, and under `-m68020-60` gcc
+  makes the 64-bit product a call to libgcc's `__muldi3` (15 ms a frame);
+  the `(int)` of a `double` is a call to `__fixxfsi` too, since gcc won't
+  emit `fintrz` for a 68040/060. The FPU's best case kept the inline
+  `muls.l` and only divided on it (`fmove.l`, `fdiv.l`, `fscale.w #16`,
+  `fintrz`, `fmove.l`, exact for the guarded quotients in extended
+  precision: same hashes): 0.5% faster under Hatari, but **Hatari charges
+  4-7 cycles a 68882 instruction**, `fdiv` included, where a real 68882's
+  `fdiv` alone is about 100 clocks, more than the 68030's whole `divs.l`.
+  With about 175 divides a frame there is nothing for an FPU to win on a
+  TT, and Hatari can't time FPU code.
 - **Smaller wins left:** the `divu.l` for `iscale`, now only for
   columns that draw (an approximation would be sub-texel: not adopted
   without Neil seeing frame differences); `R_StoreWallRange` (2.2 ms, 3K

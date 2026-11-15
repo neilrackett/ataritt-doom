@@ -121,7 +121,6 @@ void _checkcpu() {
     } else {
         Cconws("CPU type not detected\r\n");
     }
-    char fpu_detected = 0;
     if (C_FOUND == Getcookie(C__FPU, &cookie)) {
         Cconws("FPU:");
         if (1 & (cookie >> 16)) {
@@ -132,11 +131,9 @@ void _checkcpu() {
             if (fpu == 1) Cconws(" 6888?");
             else if (fpu == 2) Cconws(" 68881");
             else if (fpu == 3) Cconws(" 68882");
-            fpu_detected = 1;
         }
         if (1 & (cookie >> 19)) {
             Cconws(" integrated");
-            fpu_detected = 1;
         }
         Cconws("\r\n");
     } else {
@@ -150,10 +147,6 @@ void _checkcpu() {
         Cconws("SFP-004 FPU dispatch enabled\r\n");
 
     char sufficient = 1;
-    #ifdef __HAVE_68881__
-    sufficient &= fpu_detected;
-    #endif
-    
     #if defined(__mc68020__) || defined(__mc68030__) || defined(__mc68040__) || defined(__mc68060__)
     sufficient &= m020_detected;
     #endif
@@ -168,9 +161,6 @@ void _checkcpu() {
     Cconws("running this executable.\r\n\r\n");
     #if defined(__mc68020__) || defined(__mc68030__) || defined(__mc68040__) || defined(__mc68060__)
     Cconws("This executable requires a 68020+ CPU.\r\n");
-    #endif
-    #ifdef __HAVE_68881__
-    Cconws("This executable requires an FPU.\r\n");
     #endif
 
     Cconws("\r\n");

@@ -41,8 +41,6 @@ rcsid[] = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp $";
 #include "atari_sfp004.h"
 
 
-#ifndef __HAVE_68881__
-
 // Emits a mulu.w instruction. It's quite difficult to get gcc to do that :-)
 static uint32_t mulu(uint16_t a, uint16_t b) {
 #ifdef USEASM
@@ -58,8 +56,6 @@ static uint32_t mulu(uint16_t a, uint16_t b) {
     return (uint32_t)a * b;
 #endif
 }
-
-#endif
 
 // Fixme. __USE_C_FIXED__ or something.
 
@@ -88,7 +84,6 @@ FixedMul
 ( fixed_t	a,
   fixed_t	b )
 {
-#ifndef __HAVE_68881__
     // Is the result a negative number?
     boolean neg = 0 != ((a ^ b) & 0x80000000);
 
@@ -110,9 +105,6 @@ FixedMul
     int32_t result = hh + hl + lh + ll;
     if (neg) result = -result;
     return result;
-#else
-    return ((long long) a * (long long) b) >> FRACBITS;
-#endif
 }
 
 #ifndef FIXEDMUL_MULS64
@@ -123,7 +115,6 @@ FixedScale
 ( fixed_t	a,
   short	b )
 {
-#ifndef __HAVE_68881__
     // Is the result a negative number?
     boolean neg = 0 != ((a ^ b) & 0x80000000);
     if (a < 0) a = -a;
@@ -138,9 +129,6 @@ FixedScale
     fixed_t result = hl + (ll >> FRACBITS);
     if (neg) result = -result;
     return result;
-#else
-    return FixedMul(a,b << 1);
-#endif
 }
 
 fixed_t
@@ -148,7 +136,6 @@ FixedScale32
 ( fixed_t	a,
   fixed_t	b )
 {
-#ifndef __HAVE_68881__
     // Is the result a negative number?
     boolean neg = 0 != ((a ^ b) & 0x80000000);
 
@@ -167,9 +154,6 @@ FixedScale32
     int32_t result = hl + ll;
     if (neg) result = -result;
     return result;
-#else
-    return FixedMul(a, b);
-#endif
 }
 
 fixed_t
@@ -177,8 +161,6 @@ FixedMulShort
 ( fixed_t	a,
   short	b )
 {
-#ifndef __HAVE_68881__
-
 #ifdef USEASM
     register fixed_t result asm("d0");
     register short tmp asm("d1");
@@ -214,10 +196,6 @@ FixedMulShort
     if (neg) result = -result;
     return result;
 #endif
-
-#else
-    return FixedMul(a,(fixed_t)b << 16);
-#endif
 }
 #endif
 
@@ -249,14 +227,10 @@ FixedDiv
 
     if ( (abs(a)>>14) >= abs(b))
         return (a^b)<0 ? MININT : MAXINT;
-#ifndef __HAVE_68881__
     if (a < 0)
         return b<0?FixedDiv2(-a, -b):-FixedDiv2(-a, b);
     else
         return b<0?-FixedDiv2(a, -b):FixedDiv2(a, b);
-#else
-    return FixedDiv2 (a,b);
-#endif
 }
 
 
@@ -266,7 +240,6 @@ FixedDiv2
 ( fixed_t	a,
   fixed_t	b )
 {
-#ifndef __HAVE_68881__
     uint16_t ibit = 1;
     while (b < a)
     {
@@ -304,13 +277,4 @@ FixedDiv2
     if (a >= b) {a -= b; cl |= 0x0001;}
 
     return (((fixed_t)ch) << FRACBITS) | cl;
-#else
-    double c;
-
-    c = ((double)a) / ((double)b) * FRACUNIT;
-
-    if (c >= 2147483648.0 || c < -2147483648.0)
-        I_Error("FixedDiv: divide by zero");
-    return (fixed_t) c;
-#endif
 }

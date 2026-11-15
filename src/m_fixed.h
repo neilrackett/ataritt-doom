@@ -43,7 +43,7 @@ typedef int fixed_t;
 // does (checked for 50 million products on the host, edge cases included).
 // The 68060 dropped the 64-bit form (it traps to software), so it calls the
 // split multiply, FixedMulSplit. M_InitFixed picks, from the _CPU cookie.
-#if defined(__M68020__) && !defined(__HAVE_68881__)
+#if defined(__M68020__)
 #define FIXEDMUL_MULS64
 extern int	fixedmul_muls64;
 fixed_t FixedMulSplit	(fixed_t a, fixed_t b);
