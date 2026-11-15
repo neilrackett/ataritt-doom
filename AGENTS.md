@@ -752,10 +752,15 @@ and up to six parallel runs are fine.
   deliberate one-step lighting error showed in 107 frames of 120.)
 - **Real play** (`run.sh LABEL lowplay`): `-playdemo` at a real TT's pace
   (`-benchpace 190`: the tic clock 1.9 times as fast, as Hatari's TT is)
-  gives frames a second and the game's speed. `TryRunTics` runs at most 5
-  tics a frame (`NetUpdate` builds no further ahead: `BACKUPTICS/2-1`), so
-  below 7 fps Doom slows down rather than dropping frames, and a frame is
-  R + 5T, R the timedemo frame less a tic (T, from `nodraw`).
+  gives frames a second and the game's speed. `TryRunTics` runs what
+  `NetUpdate` built, at most `BACKUPTICS/2-1` tics ahead: 35 since
+  2026-11-15 (`BACKUPTICS` 72, `d_net.h`), so the game keeps its speed
+  down to 1 fps; a frame of n tics is R + nT, R the timedemo frame less a
+  tic (T, from `nodraw`), so at full speed R / (1 - 35T). id's 12 gave 5
+  tics a frame: below 7 fps the game slowed down instead. Where 35T >= 1
+  (STDOOM's logic on a 68000) full speed is out of reach, and each frame
+  runs the 35: demo1 on an 8 MHz STE went from 0.46 fps at 6.7% speed to
+  0.12 fps at 12.5%.
 - **`runkit.sh NAME`** runs `BENCH.TXT` lines (stdin) through `BENCH.TOS`
   under Hatari: builds at the same load alignment, `+2`, `-cacr 0111`.
 - **Real hardware:** `tools/bench/ttkit.sh` builds a kit in `tmp/ttkit`:
@@ -957,10 +962,13 @@ The first round, BENCH.TOS in TT-RAM, so the zone was 1.83 MB:
   the game logic. Another project measured 2.2 for compiled code and 1.5
   for a loop that stays in the instruction cache. High detail's extra
   time, mostly the drawers' inner loops, is 1.7 times Hatari's.
-- **Real play on a TT is in slow motion at size 10.** `TryRunTics` runs
-  at most 5 tics a frame (see "Real play"), so with those builds a frame
+- **Real play on a TT was in slow motion at size 10** while `TryRunTics`
+  ran at most 5 tics a frame (see "Real play"): with those builds a frame
   was R + 5T: 157 + 74 = 231 ms in low detail (demo3), 4.3 fps with the
   game at 62% of its speed, and 309 ms, 3.2 fps and 46%, in high detail.
+  With up to 35 a frame (2026-11-15) the game runs at full speed: at a
+  TT's pace under Hatari (gcc 4.6.4, demo3), low 4.50 fps at 64% speed
+  became 3.37 fps at full speed, high 3.28 fps at 47% 2.20 at full.
   Drawing is 54% of that frame, the game logic 32% and the C2P 14%.
   (Hatari at a TT's pace, `lowplay`, agrees: 3.7 fps and 54% for the gcc
   4.6.4 build.)

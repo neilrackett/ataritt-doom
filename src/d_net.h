@@ -46,7 +46,14 @@
 
 
 // Networking and tick handling related.
-#define BACKUPTICS		12
+// NetUpdate builds at most BACKUPTICS/2-1 tics ahead, and TryRunTics runs
+// what is built: id's 12, five tics a frame, slowed the game down below 7
+// frames a second, which an Atari is. 72 lets a frame catch up 35 tics, a
+// second, so the game keeps its speed down to 1 frame a second; not
+// without limit, as where a tic's game logic takes longer than a tic (a
+// 68000) each frame would have more to catch up. (No network here: the
+// packets' size doesn't matter, and ExpandTics takes up to 64.)
+#define BACKUPTICS		72
 
 typedef enum
 {

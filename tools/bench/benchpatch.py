@@ -584,7 +584,7 @@ p.write_text(s)
 
 # -benchpace PCT: the tic clock PCT% as fast. Hatari's TT runs TTDOOM about
 # 1.9 times as fast as a real one, so at 190 a -playdemo run has the real
-# TT's balance of tics to frames (and its slow motion below 7 fps).
+# TT's balance of tics to frames (and its slow motion below 1 fps).
 p = root / "src/i_system.c"
 s = p.read_text()
 old = "    return (t-basetime)*TICRATE/200;"

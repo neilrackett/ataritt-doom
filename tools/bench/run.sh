@@ -9,7 +9,7 @@
 # MODE: low | high (detail, screenblocks 10), with an optional suffix:
 #   nodraw (-nodraw -nosound: the game logic a tic), nosfx, nosound;
 #   play (-playdemo at a real TT's pace: frames a second and game speed
-#   in real play, where TryRunTics runs up to 5 tics a frame).
+#   in real play, where TryRunTics runs up to 35 tics a frame).
 # prof: also a per-function profile of the demo, from its first tic, in the
 # run's log; profagg.py sums it per function.
 #
@@ -122,7 +122,7 @@ PL=$(grep -ao "played [0-9]* gametics in [0-9]* realtics, [0-9]* frames" "$LOG" 
 FZ=$(grep -ao "fuzzed [0-9]* tics" "$LOG" | head -1)
 if [ -n "$PL" ]; then
   # Real play at the TT's pace: frames a second of TT time, and how fast
-  # the game ran (TryRunTics runs at most 5 tics a frame)
+  # the game ran (TryRunTics runs at most 35 tics a frame)
   echo "$PL" | awk -v l="$MACHINE-$LABEL" -v m="$MODE${DEMO:+-$DEMO}${TAG:+-$TAG}" -v st="$ST" \
     '{ printf "%-16s %-16s %4d frames %5d tics %5.2f fps %5.1f%% speed  %s\n", l, m, $7, $5, $7*35/$5, $2*100/$5, st }'
 elif [ -n "$FZ" ]; then
